@@ -1,0 +1,7 @@
+.DS_Store
+perseus_local_mirror/
+__pycache__/
+*.pyc
+.env
+.venv
+.gemini/
