@@ -1,7 +1,9 @@
 .DS_Store
-perseus_local_mirror/
+/perseus_local_mirror/
 __pycache__/
 *.pyc
 .env
 .venv
 .gemini/
+/z_archive/
+/content/
