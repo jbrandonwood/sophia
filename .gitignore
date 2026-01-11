@@ -7,3 +7,11 @@ __pycache__/
 .gemini/
 /z_archive/
 /content/
+
+# Data and Cache
+cache/
+data/
+texts/
+*.tar.bz2
+*.log
+*.jsonl

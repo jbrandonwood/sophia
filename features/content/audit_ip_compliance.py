@@ -2,10 +2,12 @@ import os
 import json
 import csv
 import logging
+import argparse
 from datetime import datetime
 
 # Configuration
-DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "mit_classics")
+# Default to MIT Classics if not specified
+DEFAULT_DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "mit_classics")
 CONFIG_DIR = os.path.join(os.path.dirname(__file__), "config")
 SAFE_TRANSLATORS_FILE = os.path.join(CONFIG_DIR, "safe_translators.json")
 BLOCKED_TRANSLATORS_FILE = os.path.join(CONFIG_DIR, "blocked_translators.json")
@@ -65,15 +67,25 @@ def classify_risk(metadata, safe_list, blocked_list):
     return "REVIEW", "Unknown Date/Translator"
 
 def main():
+    parser = argparse.ArgumentParser(description="Audit IP compliance of text files.")
+    parser.add_argument("--data-dir", default=DEFAULT_DATA_DIR, help="Directory containing data to audit")
+    args = parser.parse_args()
+
+    data_dir = args.data_dir
+    
     safe_translators = load_json_list(SAFE_TRANSLATORS_FILE)
     blocked_translators = load_json_list(BLOCKED_TRANSLATORS_FILE)
     
     results = []
     
-    logging.info("Starting IP Audit...")
+    logging.info(f"Starting IP Audit for directory: {data_dir}")
     
+    if not os.path.exists(data_dir):
+        logging.error(f"Data directory not found: {data_dir}")
+        return
+
     # Walk the data directory
-    for root, dirs, files in os.walk(DATA_DIR):
+    for root, dirs, files in os.walk(data_dir):
         for file in files:
             if not file.endswith(".txt"):
                 continue

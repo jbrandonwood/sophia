@@ -1,0 +1,76 @@
+# Feature Spec: OLL (Liberty Fund) Corpus Ingestor
+
+## 1. Overview
+A specialized data ingestion agent to crawl and pull the complete collection of the Online Library of Liberty. This tool is designed to capture not just the primary text, but also the extensive scholarly introductions and "Study Guides" unique to the Liberty Fund editions.
+
+## 2. Technical Objectives
+* **Hierarchical Crawling:** Navigate the OLL "Titles" index (`/titles`) and "Collections" index (`/collections`).
+* **High-Fidelity Extraction:** Extract clean text while preserving the "Edition Used" and "About this Title" metadata, which provide critical context for LLMs.
+* **Format Prioritization:** Target the **Facsimile PDF** for OCR verification and the **HTML/EPUB** versions for raw text extraction.
+
+## 3. Data Architecture & Scraping Logic
+
+### 3.1 Targeted Subjects
+The crawler will prioritize the following OLL-specific categories:
+* `The Scottish Enlightenment` (Smith, Hume, Ferguson)
+* `The American Revolution and Constitution`
+* `Natural Law and Enlightenment Classics`
+* `Liberty Fund's Library of the Works of Ludwig von Mises`
+
+### 3.2 Navigation Strategy
+The scraper will utilize the OLL site structure:
+1.  **Seed URL:** `https://oll.libertyfund.org/titles`
+2.  **Breadcrumb Parsing:** Extract `Author`, `Historical Period`, and `Topic` from the sidebar metadata.
+3.  **Download Priority:** * **Primary:** EPUB (If available, highest semantic structure).
+    * **Secondary:** HTML (Requires selective scraping of the `.oll-text` class).
+    * **Tertiary:** Facsimile PDF (For archival reference).
+
+---
+
+## 4. Functional Requirements
+
+### 4.1 "Contextual Enrichment" Module
+OLL works often include extensive front matter. The ingestor must separate these into distinct fields:
+* `front_matter`: Scholarly introductions and biographies.
+* `body_text`: The primary philosophical work.
+* `marginalia`: OLL-specific footnotes and cross-references.
+
+### 4.2 Rate Limiting & Ethics
+* **User-Agent:** `Philosophy-Agent-Ingestor/1.0 (Contact: [User Email])`
+* **Delay:** Implement a 2-5 second random jitter between requests to respect Liberty Fund infrastructure.
+* **Robots.txt Compliance:** Strictly follow OLL crawling directives.
+
+### 4.3 Deduplication Hook
+Before committing to storage, the script calls the **Master Manifest Manager** (MD5/MinHash) to check if a higher-quality version already exists from Standard Ebooks.
+
+---
+
+## 5. Output Data Schema (JSONL)
+```json
+{
+  "source": "Online Library of Liberty",
+  "oll_id": "1234",
+  "metadata": {
+    "title": "The Wealth of Nations",
+    "author": "Adam Smith",
+    "edition": "Cannan Edition, 1904",
+    "collection": ["Economics", "Scottish Enlightenment"],
+    "is_study_guide": false
+  },
+  "content": {
+    "introduction": "[Scholarly Intro Text]",
+    "main_body": "[Primary Source Text]",
+    "footnotes": "[Extracted Footnotes Map]"
+  }
+}
+```
+## 6. Implementation Roadmap
+Phase,Task,Focus
+I: Indexer,"Map all 1,000+ title URLs from /titles.",Coverage: Ensure no obscure titles are missed.
+II: Metadata Extractor,"Scrape the ""About this Title"" section for every book.","Context: This front-matter is ""gold"" for RAG."
+III: Text Cleaner,Strip HTML tags but preserve blockquotes and citations.,Structure: Philosophy relies on cited logic.
+IV: Ingestion,"Commit to LanceDB with ""Fat Chunk"" indexing.",Economy: Chapter-level vectors for lower costs.
+
+## 7. Quality & Validation
+* Verification: Run a sample 10% of texts through an OCR check against the Facsimile PDF to ensure no text was lost in the HTML-to-Text conversion.
+* Completeness: Cross-reference the final count against the OLL's "Titles" count.

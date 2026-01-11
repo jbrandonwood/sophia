@@ -78,12 +78,18 @@ def parse_works(author_url):
         text = a.get_text(strip=True)
         href = a['href']
         
+        if not text:
+            continue
+            
         # Heuristic filtering
         if any(ex in text for ex in exclude_text) or "permissions.html" in href:
             continue
             
-        if "http://classics.mit.edu" in href and "index.html" in href:
+        if "index.html" in href and "Browse" not in href:
              continue
+             
+        if any(x in href for x in ["/Search/", "/Buy/", "/Help/"]):
+            continue
              
         # Look for links that go to a work page (usually ../Author/work.html or absolute)
         # Typically on browse-[Author].html, links are like ../Author/work.html 
@@ -93,7 +99,10 @@ def parse_works(author_url):
         
         # Basic check to see if it looks like a work page
         if ".html" in full_url and "Browse" not in full_url:
+             logging.info(f"Adding potential work: {text} -> {full_url}")
              works.append({"title": text, "url": full_url})
+        else:
+             logging.debug(f"Skipping link: {text} -> {full_url}")
              
     logging.info(f"Found {len(works)} works on {author_url}")
     return works
@@ -105,7 +114,10 @@ def find_text_download_link(work_url, soup):
         text = a.get_text(strip=True).lower()
         href = a['href']
         
-        if ("download" in text or "text-only" in text) and ".txt" in href:
+        if ".txt" in href:
+             logging.info(f"Found candidate text link: {text} -> {href}")
+
+        if ("download" in text or "text-only" in text or "available" in text) and ".txt" in href:
             return urljoin(work_url, href)
             
     return None
@@ -197,14 +209,14 @@ def main():
     authors = parse_authors()
     
     # FOR TESTING: Limit to first 2 authors
-    authors = authors[:2] 
+    # authors = authors[:2]  
     
     for author in authors:
         logging.info(f"Processing Author: {author['name']}")
         works = parse_works(author['url'])
         
         # FOR TESTING: Limit to first 3 works per author
-        works = works[:3]
+        # works = works[:3]
         
         for work in works:
             process_work(author['name'], work)
