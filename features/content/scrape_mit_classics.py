@@ -204,7 +204,7 @@ def main():
         works = parse_works(author['url'])
         
         # FOR TESTING: Limit to first 3 works per author
-        # works = works[:3]
+        works = works[:3]
         
         for work in works:
             process_work(author['name'], work)
