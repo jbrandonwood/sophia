@@ -5,7 +5,7 @@ __pycache__/
 .env
 .venv
 .gemini/
-/z_archive/
+.z_archive/
 /content/
 
 # Data and Cache
