@@ -14,7 +14,7 @@ interface CheckpointDoc {
     created_at: number;
 }
 
-export default async function TraceDetailPage({ params }: { params: { id: string } }) {
+export default async function TraceDetailPage({ params }: { params: Promise<{ id: string }> }) {
     // Await params object for Next.js 15+ (or strict types) safely? 
     // In strict environments awaiting params is often required recently.
     const { id: threadId } = await params;
