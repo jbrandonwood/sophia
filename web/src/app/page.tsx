@@ -25,7 +25,7 @@ export default function Home() {
         content: 'Welcome to the Stoa. We begin with a simple premise: that the unexamined life is not worth living. Do you agree?'
       }
     ]
-  }) as any;
+  } as any) as any;
 
   const { messages, append, isLoading } = chatHelpers;
 
