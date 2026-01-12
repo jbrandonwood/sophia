@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@ai-sdk/google": "^3.0.6",
+    "@ai-sdk/google-vertex": "^4.0.11",
     "@ai-sdk/react": "^3.0.29",
     "@google-cloud/discoveryengine": "^2.5.2",
     "@langchain/core": "^1.1.12",
@@ -22,6 +23,7 @@
     "ai": "^6.0.27",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "date-fns": "^4.1.0",
     "firebase": "^12.7.0",
     "firebase-admin": "^13.6.0",
     "framer-motion": "^12.25.0",

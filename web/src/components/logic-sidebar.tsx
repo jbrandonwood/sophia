@@ -34,6 +34,12 @@ export function LogicSidebar() {
                             "Awaiting initial proposition..."
                         </p>
                     </div>
+
+                    <div className="pt-4 border-t border-border">
+                        <a href="/traces" className="text-xs text-muted-foreground hover:text-primary transition-colors font-sans flex items-center gap-2">
+                            View Agent Traces &rarr;
+                        </a>
+                    </div>
                 </div>
             </SheetContent>
         </Sheet>

@@ -1,11 +1,11 @@
 import { StateGraph, START, END, Annotation } from "@langchain/langgraph";
 import { BaseMessage, AIMessage } from "@langchain/core/messages";
 import { searchPhilosophicalCorpus, Citation } from "../lib/vertex";
-import { google } from "@ai-sdk/google";
+import { vertex } from "@ai-sdk/google-vertex";
 import { generateText } from "ai";
 
 // --- Configuration ---
-// Using 1.5 Pro as proxy.
+// Using Vertex AI with Gemini Experimental (targeting latest/Gemini 3)
 const SOPHIA_SYSTEM_PROMPT = `
 You are Sophia, a Socratic Interlocutor.
 Your goal is NOT to answer questions directly, but to guide the user to examine their own premises through the Socratic method (Elicit -> Examine -> Aporia).
@@ -81,9 +81,8 @@ async function aporiaNode(state: AgentState): Promise<Partial<AgentState>> {
     }
 
     try {
-        // @ts-ignore - The google provider type might potentially mismatch, ignoring specifically for build
         const { text } = await generateText({
-            model: google("gemini-1.5-pro-latest"),
+            model: vertex("gemini-experimental"), // Targeting latest/v3 via experimental
             system: SOPHIA_SYSTEM_PROMPT,
             prompt: `
 Context:
@@ -118,4 +117,8 @@ const workflow = new StateGraph(AgentStateAnnotation)
     .addEdge("examine", "aporia")
     .addEdge("aporia", END);
 
-export const app = workflow.compile();
+import { FirestoreSaver } from "../lib/langgraph/firestore-saver";
+
+const checkpointer = new FirestoreSaver();
+
+export const app = workflow.compile({ checkpointer });

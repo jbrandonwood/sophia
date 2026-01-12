@@ -5,7 +5,7 @@ import { HumanMessage } from '@langchain/core/messages';
 export async function POST(req: NextRequest) {
     try {
         const body = await req.json();
-        const { messages } = body;
+        const { messages, threadId } = body;
 
         // Safety check
         if (!messages || !Array.isArray(messages) || messages.length === 0) {
@@ -13,6 +13,9 @@ export async function POST(req: NextRequest) {
         }
 
         const lastMessageContent = messages[messages.length - 1].content;
+
+        // Use provided threadId or generate a new one
+        const currentThreadId = threadId || crypto.randomUUID();
 
         // Create input state. 
         // We cast to 'any' to avoid strict input matching issues that sometimes occur 
@@ -23,7 +26,11 @@ export async function POST(req: NextRequest) {
             vertexSearchCount: 0,
         };
 
-        const result = await app.invoke(input);
+        const result = await app.invoke(input, {
+            configurable: {
+                thread_id: currentThreadId
+            }
+        });
 
         // Result message extraction
         // The result state contains all messages.
@@ -41,7 +48,12 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({
             role: 'assistant',
             content: content,
-            id: crypto.randomUUID()
+            id: crypto.randomUUID(),
+            threadId: currentThreadId
+        }, {
+            headers: {
+                'x-sophia-thread-id': currentThreadId
+            }
         });
 
     } catch (e: any) {

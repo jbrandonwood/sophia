@@ -3,7 +3,7 @@ import { BaseCheckpointSaver, Checkpoint, CheckpointMetadata, CheckpointTuple } 
 import { db } from "../firebase/server";
 import { RunnableConfig } from "@langchain/core/runnables";
 
-interface FirestoreCheckpoint {
+interface FirestoreCheckpointData {
     checkpoint: string; // JSON serialized
     metadata: string; // JSON serialized
     parent_config?: {
@@ -11,7 +11,8 @@ interface FirestoreCheckpoint {
             thread_id: string;
             checkpoint_id: string;
         }
-    }
+    };
+    created_at: number; // Timestamp for ordering
 }
 
 export class FirestoreSaver extends BaseCheckpointSaver {
@@ -25,51 +26,82 @@ export class FirestoreSaver extends BaseCheckpointSaver {
 
         if (!thread_id) return undefined;
 
+        let docPath = `threads/${thread_id}`;
+
         if (checkpoint_id) {
-            // Fetch specific checkpoint (not implemented for MVP, returning latest)
-            // In a real implementation we might store sub-collections `checkpoints`
-            // For MVP, we presume strict latest-only or monolithic state?
-            // Spec says: `threads/{thread_id}` stores state.
-            // It implies overwriting? LangGraph usually needs history.
-            // Let's implement getting the HEAD.
+            docPath += `/checkpoints/${checkpoint_id}`;
+        } else {
+            // If no checkpoint_id provided, we need the latest.
+            // Option A: Read thread_id doc to get HEAD pointer.
+            // Option B: Query checkpoints collection limit 1 desc.
+            // Let's go with Option B for resilience, assuming we index `created_at` or `ts`.
+            // But for MVP, let's look at the thread doc metadata if we store "HEAD" there.
+            const threadDoc = await db.collection("threads").doc(thread_id).get();
+            if (!threadDoc.exists) return undefined;
+            const threadData = threadDoc.data();
+            const latestId = threadData?.latest_checkpoint_id;
+
+            if (!latestId) return undefined;
+            docPath += `/checkpoints/${latestId}`;
         }
 
-        const docRef = db.collection("threads").doc(thread_id);
-        const docSnap = await docRef.get();
+        const docSnap = await db.doc(docPath).get();
 
         if (!docSnap.exists) {
             return undefined;
         }
 
-        const data = docSnap.data() as FirestoreCheckpoint;
+        const data = docSnap.data() as FirestoreCheckpointData;
         if (!data || !data.checkpoint) return undefined;
 
         // Parse JSON
-        // Note: In JS SDK, serialization is often handled by the caller or saver. 
-        // We will assume standard JSON.parse/stringify for simple states.
-        // For complex objects, we might need a serializer.
-
-        // Checkpoint is expected to be an object.
         const checkpoint = JSON.parse(data.checkpoint) as Checkpoint;
         const metadata = (data.metadata ? JSON.parse(data.metadata) : { source: "update", step: 0, parents: {} }) as CheckpointMetadata;
 
-        // We need to return CheckpointTuple
         return {
-            config,
+            config: {
+                ...config,
+                configurable: {
+                    ...config.configurable,
+                    checkpoint_id: checkpoint.id,
+                }
+            },
             checkpoint,
             metadata,
             parentConfig: data.parent_config
         };
     }
 
-    async deleteThread(threadId: string): Promise<void> {
-        // Not implemented for MVP
-        return;
+    async *list(config: RunnableConfig, options?: any): AsyncGenerator<CheckpointTuple> {
+        const thread_id = config.configurable?.thread_id;
+        if (!thread_id) return;
+
+        // List all checkpoints for this thread, explicitly specific to current requirements
+        const snapshot = await db.collection(`threads/${thread_id}/checkpoints`)
+            .orderBy('created_at', 'desc')
+            .get();
+
+        for (const doc of snapshot.docs) {
+            const data = doc.data() as FirestoreCheckpointData;
+            const checkpoint = JSON.parse(data.checkpoint) as Checkpoint;
+            const metadata = JSON.parse(data.metadata) as CheckpointMetadata;
+
+            yield {
+                config: {
+                    configurable: {
+                        thread_id,
+                        checkpoint_id: checkpoint.id,
+                    }
+                },
+                checkpoint,
+                metadata,
+                parentConfig: data.parent_config
+            };
+        }
     }
 
-    async *list(config: RunnableConfig, options?: any): AsyncGenerator<CheckpointTuple> {
+    async deleteThread(threadId: string): Promise<void> {
         // Not implemented for MVP
-        // Yielding nothing matches the generator type
         return;
     }
 
@@ -80,13 +112,18 @@ export class FirestoreSaver extends BaseCheckpointSaver {
 
     async put(config: RunnableConfig, checkpoint: Checkpoint, metadata: CheckpointMetadata, newVersions: Record<string, any>): Promise<RunnableConfig> {
         const thread_id = config.configurable?.thread_id;
+        console.log(`[FirestoreSaver] Putting checkpoint for thread: ${thread_id}, ID: ${checkpoint.id}`);
         if (!thread_id) {
+            console.error("[FirestoreSaver] Missing thread_id config!");
             throw new Error("Missing thread_id in config");
         }
 
-        const docRef = db.collection("threads").doc(thread_id);
+        const checkpoint_id = checkpoint.id;
 
-        const data: FirestoreCheckpoint = {
+        // 1. Save the checkpoint to subcollection
+        const checkpointRef = db.collection(`threads/${thread_id}/checkpoints`).doc(checkpoint_id);
+
+        const data: FirestoreCheckpointData = {
             checkpoint: JSON.stringify(checkpoint),
             metadata: JSON.stringify(metadata),
             parent_config: {
@@ -94,10 +131,37 @@ export class FirestoreSaver extends BaseCheckpointSaver {
                     thread_id,
                     checkpoint_id: config.configurable?.checkpoint_id || checkpoint.id,
                 }
-            }
+            },
+            created_at: Date.now()
         };
 
-        await docRef.set(data, { merge: true });
+        await checkpointRef.set(data);
+
+        // 2. Update the parent thread doc with pointer to HEAD
+        // We also want to store some metadata on the thread itself for the list view
+        const threadRef = db.collection("threads").doc(thread_id);
+
+        // Extract basic info for the thread list
+        // Try to get the last message text if available in standard format
+        // This is generic handling; specific handling might be needed if state structure varies
+        let preview = "";
+        // @ts-ignore - inspecting unknown state structure
+        if (checkpoint.channel_values?.messages && Array.isArray(checkpoint.channel_values.messages)) {
+            // @ts-ignore
+            const msgs = checkpoint.channel_values.messages;
+            if (msgs.length > 0) {
+                const last = msgs[msgs.length - 1];
+                preview = typeof last.content === 'string' ? last.content : JSON.stringify(last.content);
+                // Truncate
+                if (preview.length > 100) preview = preview.substring(0, 100) + "...";
+            }
+        }
+
+        await threadRef.set({
+            latest_checkpoint_id: checkpoint_id,
+            updated_at: Date.now(),
+            preview: preview || "No preview"
+        }, { merge: true });
 
         return {
             configurable: {
