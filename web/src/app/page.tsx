@@ -6,7 +6,7 @@ import { LogOut } from "lucide-react";
 import { DialogueStream } from "@/components/chat/DialogueStream";
 import { LogicSidebar } from "@/components/logic-sidebar";
 import { Separator } from "@/components/ui/separator";
-import { useChat } from "ai/react";
+import { useChat } from "@ai-sdk/react";
 
 export default function Home() {
   const { user, signOut } = useAuth();
