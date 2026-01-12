@@ -1,12 +1,17 @@
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { UIMessage as Message } from "@ai-sdk/react"
 import ReactMarkdown from "react-markdown"
 
-export function DialogueStream({ messages }: { messages: Message[] }) {
+interface Message {
+    id: string;
+    role: string;
+    content: string;
+}
+
+export function DialogueStream({ messages }: { messages: Message[] | any[] }) {
     return (
         <ScrollArea className="h-full pr-4">
             <div className="flex flex-col space-y-8 py-6 px-4">
-                {messages.map((message) => (
+                {messages.map((message: any) => (
                     <div key={message.id} className="flex flex-col space-y-2 max-w-prose mx-auto w-full animate-in fade-in duration-500">
                         <span className="text-xs font-bold text-muted-foreground uppercase tracking-widest font-sans">
                             {message.role === "user" ? "Interlocutor" : "Sophia"}
