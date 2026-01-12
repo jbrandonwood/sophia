@@ -1,5 +1,5 @@
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { Message } from "@ai-sdk/react"
+import { UIMessage as Message } from "@ai-sdk/react"
 import ReactMarkdown from "react-markdown"
 
 export function DialogueStream({ messages }: { messages: Message[] }) {
