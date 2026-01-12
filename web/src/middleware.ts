@@ -14,9 +14,10 @@ export function middleware(request: NextRequest) {
     base-uri 'self';
     form-action 'self';
     frame-ancestors 'none';
+    frame-src 'self' https://*.firebaseapp.com https://*.google.com;
     block-all-mixed-content;
     upgrade-insecure-requests;
-    connect-src 'self' https: https://*.googleapis.com; 
+    connect-src 'self' https: https://*.googleapis.com https://*.firebaseapp.com; 
 `;
     // Replace newlines with spaces
     const contentSecurityPolicyHeaderValue = cspHeader
@@ -30,6 +31,8 @@ export function middleware(request: NextRequest) {
         'Content-Security-Policy',
         contentSecurityPolicyHeaderValue
     );
+    // Fix for Firebase Auth popup closed by user error
+    requestHeaders.set('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
 
     const response = NextResponse.next({
         request: {
@@ -40,6 +43,7 @@ export function middleware(request: NextRequest) {
         'Content-Security-Policy',
         contentSecurityPolicyHeaderValue
     );
+    response.headers.set('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
 
     return response;
 }
