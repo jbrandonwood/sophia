@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
 
 env:
-  PROJECT_ID: sophia-prod # Update with actual project ID if different
+  PROJECT_ID: sophia-484006 # Updated to actual project ID
   REGION: us-central1
   REPO_NAME: sophia-repo
   SERVICE_NAME: sophia-web
