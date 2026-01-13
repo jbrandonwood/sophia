@@ -1,8 +1,8 @@
 import { SearchServiceClient } from '@google-cloud/discoveryengine';
 
-const PROJECT_ID = process.env.GOOGLE_CLOUD_PROJECT || 'sophia-production';
+const PROJECT_ID = process.env.GOOGLE_VERTEX_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT || 'sophia-production';
 const LOCATION = 'global';
-const DATA_STORE_ID = 'sophia-kb-v1';
+const DATA_STORE_ID = process.env.VERTEX_SEARCH_DATA_STORE_ID || 'sophia-kb-v1';
 const MAX_SEARCHES_PER_TURN = 10;
 
 export interface Citation {
