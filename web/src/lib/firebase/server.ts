@@ -1,32 +1,25 @@
+import * as admin from 'firebase-admin';
 
-import { initializeApp, getApps, getApp, cert, ServiceAccount } from "firebase-admin/app";
-import { getAuth } from "firebase-admin/auth";
-import { getFirestore } from "firebase-admin/firestore";
+if (!admin.apps.length) {
+    try {
+        const privateKey = process.env.FIREBASE_PRIVATE_KEY;
+        if (!privateKey) {
+            console.error("FIREBASE_PRIVATE_KEY is missing in environment variables.");
+        }
 
-function getFirebaseAdminApp() {
-    if (getApps().length) {
-        return getApp();
-    }
-
-    // If we have explicit credentials (e.g. from secrets)
-    if (process.env.FIREBASE_PRIVATE_KEY && process.env.FIREBASE_CLIENT_EMAIL) {
-        const serviceAccount: ServiceAccount = {
-            projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID,
-            clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-            privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, "\n"),
-        };
-        return initializeApp({
-            credential: cert(serviceAccount),
+        admin.initializeApp({
+            credential: admin.credential.cert({
+                projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
+                clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+                // Handle newlines in private key if they are escaped
+                privateKey: privateKey?.replace(/\\n/g, '\n'),
+            }),
         });
+        console.log("Firebase Admin Initialized successfully for project:", process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID);
+    } catch (error) {
+        console.error('Firebase admin initialization error', error);
     }
-
-    // Otherwise, fallback to Application Default Credentials (ADC)
-    // This works automatically on Cloud Run if the service account has permissions.
-    return initializeApp();
 }
 
-const app = getFirebaseAdminApp();
-const auth = getAuth(app);
-const db = getFirestore(app);
-
-export { app, auth, db };
+export const db = admin.firestore();
+export const auth = admin.auth();

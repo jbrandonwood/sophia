@@ -1,9 +1,12 @@
-import { SearchServiceClient } from '@google-cloud/discoveryengine';
+import { GoogleAuth } from 'google-auth-library';
 
-const PROJECT_ID = process.env.GOOGLE_VERTEX_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT || 'sophia-production';
+const PROJECT_ID = process.env.GOOGLE_VERTEX_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT || 'sophia-484006';
 const LOCATION = 'global';
 const DATA_STORE_ID = process.env.VERTEX_SEARCH_DATA_STORE_ID || 'sophia-kb-v1';
 const MAX_SEARCHES_PER_TURN = 10;
+
+// REST API Endpoint Construction
+const API_ENDPOINT = `https://discoveryengine.googleapis.com/v1alpha/projects/${PROJECT_ID}/locations/${LOCATION}/collections/default_collection/dataStores/${DATA_STORE_ID}/servingConfigs/default_search:search`;
 
 export interface Citation {
     source: string;
@@ -15,13 +18,15 @@ export interface SearchResult {
     citations: Citation[];
 }
 
-let client: SearchServiceClient | null = null;
+let authClient: GoogleAuth | null = null;
 
-function getClient(): SearchServiceClient {
-    if (!client) {
-        client = new SearchServiceClient();
+function getAuthClient(): GoogleAuth {
+    if (!authClient) {
+        authClient = new GoogleAuth({
+            scopes: ['https://www.googleapis.com/auth/cloud-platform']
+        });
     }
-    return client;
+    return authClient;
 }
 
 export async function searchPhilosophicalCorpus(
@@ -32,42 +37,55 @@ export async function searchPhilosophicalCorpus(
         return { citations: [] };
     }
 
-    const client = getClient();
-    const parent = client.projectLocationCollectionDataStorePath(
-        PROJECT_ID,
-        LOCATION,
-        'default_collection',
-        DATA_STORE_ID
-    );
-
     try {
-        // The response is an array: [responseObject, request, rawResponse]
-        const [response] = await client.search({
-            servingConfig: `${parent}/servingConfigs/default_search`,
-            query: query,
-            pageSize: 3,
-            contentSearchSpec: {
-                snippetSpec: { returnSnippet: true },
-                extractiveContentSpec: { maxExtractiveAnswerCount: 1 }
+        // 1. Get Auth Token
+        const auth = getAuthClient();
+        const client = await auth.getClient();
+        const accessToken = await client.getAccessToken();
+
+        if (!accessToken.token) {
+            throw new Error("Failed to generate Google Cloud access token");
+        }
+
+        // 2. Make REST Request
+        const response = await fetch(API_ENDPOINT, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${accessToken.token}`,
+                'Content-Type': 'application/json'
             },
+            body: JSON.stringify({
+                query: query,
+                pageSize: 3,
+                contentSearchSpec: {
+                    snippetSpec: { returnSnippet: true },
+                    // extractiveContentSpec: { maxExtractiveAnswerCount: 1 }
+                }
+            })
         });
 
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error(`[Sophia] Vertex AI REST Error (${response.status}):`, errorText.substring(0, 200));
+            return { citations: [] };
+        }
+
+        const data = await response.json();
         const citations: Citation[] = [];
 
-        // Cast response to any to avoid strict typing issues with specific google-cloud versioning
-        // We know 'results' exists on the search response.
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const results = (response as any).results;
+        // 3. Parse Results
+        // Protocol: { results: [ { document: { ... } } ] }
+        if (data.results && Array.isArray(data.results)) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            for (const result of data.results as any[]) {
+                const docData = result.document?.derivedStructData;
+                const structData = result.document?.structData;
 
-        if (results) {
-            for (const result of results) {
-                // Safe navigation with 'any' cast or optional chaining
-                const data = result.document?.derivedStructData;
-                if (!data) continue;
+                if (!docData) continue;
 
-                const snippet = data.snippets?.[0]?.snippet || data.extractive_answers?.[0]?.content;
-                const sourceTitle = result.document?.structData?.title || "Unknown Source";
-                const sourceAuthor = result.document?.structData?.author || "Unknown Author";
+                const snippet = docData.snippets?.[0]?.snippet || docData.extractive_answers?.[0]?.content;
+                const sourceTitle = structData?.title || "Unknown Source";
+                const sourceAuthor = structData?.author || "Unknown Author";
 
                 if (snippet) {
                     citations.push({
@@ -82,7 +100,7 @@ export async function searchPhilosophicalCorpus(
         return { citations };
 
     } catch (error) {
-        console.error('[Sophia] Vertex AI Search Error:', error);
+        console.error('[Sophia] Vertex AI Search Critical Error:', error);
         return { citations: [] };
     }
 }
