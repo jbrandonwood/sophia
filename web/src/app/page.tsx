@@ -1,121 +1,220 @@
 "use client";
 
 import { useAuth } from "@/context/auth-context";
-import { LogOut } from "lucide-react";
 import { DialogueStream } from "@/components/chat/DialogueStream";
 import { LogicSidebar } from "@/components/logic-sidebar";
+import { HistorySidebar } from "@/components/history-sidebar";
 import { Separator } from "@/components/ui/separator";
-import { useChat } from "@ai-sdk/react";
-import { useState } from "react";
+import { UserSettingsMenu } from "@/components/user-settings-menu";
+
+import { AutoResizeTextarea } from "@/components/ui/auto-resize-textarea";
+import { useState, useEffect, useRef } from "react";
+import { getThreadMessages } from "@/actions/history";
 
 export default function Home() {
   const { user, signOut } = useAuth();
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [input, setInput] = useState("");
   const [threadId, setThreadId] = useState<string | null>(null);
 
-  // Cast to any to bypass strict type checking against a potentially mismatching SDK version
-  // We expect 'append' to work at runtime.
-  const chatHelpers = useChat({
-    // api property defaults to /api/chat usually, but if type complains we omit it or ignore
-    api: '/api/chat',
-    body: {
-      threadId: threadId,
-    },
-    initialMessages: [
-      {
-        id: '1',
-        role: 'assistant',
-        content: 'Welcome to the Stoa. We begin with a simple premise: that the unexamined life is not worth living. Do you agree?'
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [messages, setMessages] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [error, setError] = useState<any>(null);
+  const data = undefined; // Placeholder for thinking stream
+  const formRef = useRef<HTMLFormElement>(null);
+
+  // Initial greeting
+  const initialMessages = [
+    {
+      id: '1',
+      role: 'assistant',
+      content: 'Welcome to the Stoa. We begin with a simple premise: that the unexamined life is not worth living. Do you agree?'
+    }
+  ];
+
+  // Load Request
+  useEffect(() => {
+    async function load() {
+      if (!threadId) {
+        setMessages(initialMessages);
+        return;
       }
-    ],
-    onFinish: (message: any, options: any) => {
-      // The AI SDK doesn't expose the raw JSON response easily in onFinish usually, 
-      // effectively we have to rely on side-channels or inspection if we want the ID.
-      // However, looking at the network tab is one thing.
-      // Actually, we might need a custom fetcher or just accept that for MVP we might miss the ID
-      // if we don't return it in a header or parse carefully.
-      // Wait, standard `useChat` doesn't give access to the custom response fields in onFinish easily.
-      // Bit of a hack: we can make a separate call or use `onResponse`.
-    },
-    onResponse: (response: any) => {
-      // Clone the response to read it without consuming the stream for the chat usage?
-      // Actually `useChat` says "You can use this callback to process the response...".
-      // But the stream is locked?
-      // Let's check headers.
-      // For now, let's just optimistically assume the API might not easily pass it back via stream 
-      // unless we put it in a header x-thread-id.
-      // Let's assume we implement the header in the API route too if we really need it here.
-      // OR: simpler approach for MVP debug:
-      // We just let the *server* handle the thread continuity?
-      // No, server is stateless unless we pass ID.
-      // Let's modify the API to return `x-thread-id` header.
-      const id = response.headers.get('x-sophia-thread-id');
-      if (id) {
-        setThreadId(id);
+
+      setIsLoading(true);
+      try {
+        const history = await getThreadMessages(threadId);
+        if (history && history.length > 0) {
+          setMessages(history);
+        } else {
+          setMessages(initialMessages);
+        }
+      } catch (e) {
+        console.error("Failed to load thread", e);
+        setMessages(initialMessages);
+      } finally {
+        setIsLoading(false);
       }
     }
-  } as any) as any;
+    load();
+  }, [threadId]);
 
-  const { messages, append, isLoading } = chatHelpers;
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setInput(e.target.value);
+  };
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      if (formRef.current) {
+        formRef.current.requestSubmit();
+      }
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim()) return;
+    if (!input.trim() || isLoading) return;
+    if (!user) return; // Guard
 
-    // Append user message
-    const userMessage = { role: "user", content: input };
+    const userContent = input;
     setInput("");
+    setIsLoading(true);
 
-    if (append) {
-      // Pass stored threadId if available. useChat uses the latest state of `body`? 
-      // Usually yes.
-      await append(userMessage);
+    // Optimistic update
+    const newMessages = [
+      ...messages,
+      { id: Date.now().toString(), role: 'user', content: userContent }
+    ];
+    setMessages(newMessages);
+
+    try {
+      // Get ID token
+      const token = await user.getIdToken();
+
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          messages: newMessages,
+          threadId: threadId
+        })
+      });
+
+      if (!response.ok) throw new Error(response.statusText);
+
+      const threadHeader = response.headers.get('x-sophia-thread-id');
+      if (threadHeader && threadHeader !== threadId) {
+        setThreadId(threadHeader);
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error("No reader");
+
+      // Add placeholder for assistant
+      const assistantMsgId = (Date.now() + 1).toString();
+      setMessages(prev => [
+        ...prev,
+        { id: assistantMsgId, role: 'assistant', content: '' }
+      ]);
+
+      const decoder = new TextDecoder();
+      let assistantContent = "";
+
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const text = decoder.decode(value, { stream: true });
+        buffer += text;
+
+        const lines = buffer.split('\n');
+        // Keep the last segment (potentially incomplete) in the buffer
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (line.trim() === '') continue;
+
+          if (line.startsWith('0:')) {
+            try {
+              const content = JSON.parse(line.substring(2));
+              if (content) {
+                assistantContent += content;
+                // Update state specifically for the assistant message
+                setMessages(currentMessages => {
+                  const updated = [...currentMessages];
+                  const lastMsg = updated[updated.length - 1];
+                  if (lastMsg.role === 'assistant') {
+                    lastMsg.content = assistantContent;
+                  }
+                  return updated;
+                });
+              }
+            } catch (e) {
+              console.warn("Parse error", e);
+            }
+          }
+        }
+      }
+
+    } catch (err: any) {
+      setError(err);
+      console.error("Custom Fetch Error:", err);
+    } finally {
+      setIsLoading(false);
     }
   };
 
   return (
-    <div className="flex flex-col h-screen bg-background text-foreground transition-colors duration-500">
+    <div className="flex flex-col h-[100dvh] bg-background text-foreground transition-colors duration-500 overscroll-none">
       {/* Header */}
-      <header className="flex justify-between items-center py-4 px-8 border-b border-border/40 bg-background/95 backdrop-blur-sm z-10 sticky top-0">
-        <div className="flex items-center gap-4">
-          <LogicSidebar />
-          <h1 className="text-xl font-serif tracking-tight text-primary font-bold">Sophia</h1>
+      <header className="flex justify-between items-center py-2 sm:py-4 px-3 sm:px-8 border-b border-border/40 bg-background/95 backdrop-blur-sm z-10 sticky top-0 sm:gap-4">
+        <div className="flex items-center gap-2 sm:gap-4">
+          {/* History Sidebar (Left) */}
+          <HistorySidebar
+            currentThreadId={threadId}
+            onSelectThread={setThreadId}
+          />
+          <h1 className="text-lg sm:text-xl font-serif tracking-tight text-primary font-bold truncate">Sophia ({messages.length})</h1>
         </div>
 
-        <div className="flex items-center gap-4">
-          <span className="text-xs font-sans text-muted-foreground uppercase tracking-wider">{user?.email}</span>
-          <button
-            onClick={signOut}
-            className="p-2 hover:bg-secondary rounded-full transition-colors"
-            title="Sign Out"
-          >
-            <LogOut className="w-4 h-4 text-muted-foreground" />
-          </button>
+        <div className="flex items-center gap-2 sm:gap-4">
+          <LogicSidebar />
+          <UserSettingsMenu />
         </div>
       </header>
 
       {/* Main Dialogue Area */}
       <main className="flex-1 overflow-hidden relative">
         <div className="max-w-3xl mx-auto h-full flex flex-col">
-          <div className="flex-1 overflow-hidden">
-            <DialogueStream messages={messages} />
+          {error && (
+            <div className="p-4 bg-destructive/10 text-destructive text-sm text-center border-b border-destructive/20">
+              An error occurred: {error.message}
+            </div>
+          )}
+          <div className="flex-1 overflow-hidden min-h-0">
+            <DialogueStream messages={messages} isLoading={isLoading} data={data} threadId={threadId} />
           </div>
 
           {/* Input Area */}
-          <div className="p-6 pb-8 bg-background">
+          <div className="p-3 sm:p-6 pb-4 sm:pb-8 bg-background">
             <div className="max-w-prose mx-auto relative">
-              <Separator className="mb-4 bg-primary/10" />
-              <form onSubmit={handleSubmit}>
-                <input
-                  className="w-full bg-transparent border-none text-lg font-serif focus:ring-0 placeholder:text-muted-foreground/50 resize-none py-4 focus:outline-none"
+              <Separator className="mb-2 sm:mb-4 bg-primary/10" />
+              <form onSubmit={handleSubmit} ref={formRef}>
+                <AutoResizeTextarea
+                  className="w-full bg-transparent border-none text-base sm:text-lg font-serif focus:ring-0 placeholder:text-muted-foreground/50 resize-none py-2 sm:py-4 focus:outline-none min-h-[44px] sm:min-h-[56px] px-0 shadow-none ring-offset-0 focus-visible:ring-0 focus-visible:ring-offset-0"
                   placeholder="Respond to the inquiry..."
                   autoFocus
                   value={input}
                   onChange={handleInputChange}
+                  onKeyDown={onKeyDown}
                 />
               </form>
             </div>

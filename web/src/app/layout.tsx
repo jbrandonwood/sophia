@@ -4,6 +4,7 @@ import { EB_Garamond, Inter } from "next/font/google";
 import "./globals.css";
 import { AuthProvider } from "@/context/auth-context";
 import AuthGuard from "@/components/auth-guard";
+import { ThemeProvider } from "@/components/theme-provider";
 
 const ebGaramond = EB_Garamond({
   variable: "--font-serif",
@@ -26,15 +27,22 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <body
         className={`${ebGaramond.variable} ${inter.variable} antialiased bg-background text-foreground`}
       >
-        <AuthProvider>
-          <AuthGuard>
-            {children}
-          </AuthGuard>
-        </AuthProvider>
+        <ThemeProvider
+          attribute="class"
+          defaultTheme="system"
+          enableSystem
+          disableTransitionOnChange
+        >
+          <AuthProvider>
+            <AuthGuard>
+              {children}
+            </AuthGuard>
+          </AuthProvider>
+        </ThemeProvider>
       </body>
     </html>
   );
