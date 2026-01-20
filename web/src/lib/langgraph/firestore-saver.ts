@@ -1,86 +1,94 @@
-
-import { BaseCheckpointSaver, Checkpoint, CheckpointMetadata, CheckpointTuple } from "@langchain/langgraph";
+import {
+    BaseCheckpointSaver,
+    Checkpoint,
+    CheckpointMetadata,
+    RunnableConfig,
+} from "@langchain/core/runnables";
 import { db } from "../firebase/server";
-import { RunnableConfig } from "@langchain/core/runnables";
 
 interface FirestoreCheckpointData {
-    checkpoint: string; // JSON serialized
-    metadata: string; // JSON serialized
-    parent_config?: {
-        configurable: {
-            thread_id: string;
-            checkpoint_id: string;
-        }
-    };
-    created_at: number; // Timestamp for ordering
+    checkpoint: string;
+    metadata: string;
+    parent_config?: RunnableConfig;
+    created_at: number;
 }
 
+/**
+ * A LangGraph checkpointer that stores state in Google Cloud Firestore.
+ * Standardizes storage for Sophia's philosophical discourse traces.
+ */
 export class FirestoreSaver extends BaseCheckpointSaver {
     constructor() {
         super();
     }
 
-    async getTuple(config: RunnableConfig): Promise<CheckpointTuple | undefined> {
+    async getTuple(config: RunnableConfig): Promise<any> {
         const thread_id = config.configurable?.thread_id;
         const checkpoint_id = config.configurable?.checkpoint_id;
 
         if (!thread_id) return undefined;
 
-        let docPath = `threads/${thread_id}`;
+        console.log(`[FirestoreSaver] Getting state for thread: ${thread_id}, Checkpoint: ${checkpoint_id || 'LATEST'}`);
 
+        let doc;
         if (checkpoint_id) {
-            docPath += `/checkpoints/${checkpoint_id}`;
+            doc = await db.collection(`threads/${thread_id}/checkpoints`).doc(checkpoint_id).get();
         } else {
-            // If no checkpoint_id provided, we need the latest.
-            // Option A: Read thread_id doc to get HEAD pointer.
-            // Option B: Query checkpoints collection limit 1 desc.
-            // Let's go with Option B for resilience, assuming we index `created_at` or `ts`.
-            // But for MVP, let's look at the thread doc metadata if we store "HEAD" there.
-            const threadDoc = await db.collection("threads").doc(thread_id).get();
-            if (!threadDoc.exists) return undefined;
-            const threadData = threadDoc.data();
-            const latestId = threadData?.latest_checkpoint_id;
-
-            if (!latestId) return undefined;
-            docPath += `/checkpoints/${latestId}`;
+            // Get latest
+            const snapshot = await db.collection(`threads/${thread_id}/checkpoints`)
+                .orderBy("created_at", "desc")
+                .limit(1)
+                .get();
+            doc = snapshot.docs[0];
         }
 
-        const docSnap = await db.doc(docPath).get();
-
-        if (!docSnap.exists) {
+        if (!doc || !doc.exists) {
+            console.log(`[FirestoreSaver] No checkpoint found for thread ${thread_id}`);
             return undefined;
         }
 
-        const data = docSnap.data() as FirestoreCheckpointData;
-        if (!data || !data.checkpoint) return undefined;
-
-        // Parse JSON
+        const data = doc.data() as FirestoreCheckpointData;
         const checkpoint = JSON.parse(data.checkpoint) as Checkpoint;
-        const metadata = (data.metadata ? JSON.parse(data.metadata) : { source: "update", step: 0, parents: {} }) as CheckpointMetadata;
+        const metadata = JSON.parse(data.metadata) as CheckpointMetadata;
 
         return {
             config: {
-                ...config,
                 configurable: {
-                    ...config.configurable,
-                    checkpoint_id: checkpoint.id,
-                }
+                    thread_id,
+                    checkpoint_id: doc.id,
+                },
             },
             checkpoint,
             metadata,
-            parentConfig: data.parent_config
+            parent_config: data.parent_config,
         };
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any
-    async *list(config: RunnableConfig, _options?: any): AsyncGenerator<CheckpointTuple> {
+    async *list(
+        config: RunnableConfig,
+        before?: RunnableConfig,
+        limit?: number
+    ): AsyncGenerator<any> {
         const thread_id = config.configurable?.thread_id;
         if (!thread_id) return;
 
-        // List all checkpoints for this thread, explicitly specific to current requirements
-        const snapshot = await db.collection(`threads/${thread_id}/checkpoints`)
-            .orderBy('created_at', 'desc')
-            .get();
+        let query = db.collection(`threads/${thread_id}/checkpoints`)
+            .orderBy("created_at", "desc");
+
+        if (before?.configurable?.checkpoint_id) {
+            const beforeDoc = await db.collection(`threads/${thread_id}/checkpoints`)
+                .doc(before.configurable.checkpoint_id)
+                .get();
+            if (beforeDoc.exists) {
+                query = query.startAfter(beforeDoc);
+            }
+        }
+
+        if (limit) {
+            query = query.limit(limit);
+        }
+
+        const snapshot = await query.get();
 
         for (const doc of snapshot.docs) {
             const data = doc.data() as FirestoreCheckpointData;
@@ -91,29 +99,28 @@ export class FirestoreSaver extends BaseCheckpointSaver {
                 config: {
                     configurable: {
                         thread_id,
-                        checkpoint_id: checkpoint.id,
-                    }
+                        checkpoint_id: doc.id,
+                    },
                 },
                 checkpoint,
                 metadata,
-                parentConfig: data.parent_config
+                parent_config: data.parent_config,
             };
         }
     }
 
-    async deleteThread(threadId: string): Promise<void> {
+    async deleteThread(): Promise<void> {
         // Not implemented for MVP
         return;
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars
-    async putWrites(_config: RunnableConfig, _writes: any[], _taskId: string): Promise<void> {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    async putWrites(_config: RunnableConfig, _writes: unknown[], _taskId: string): Promise<void> {
         // Not implemented for MVP
         return;
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    async put(config: RunnableConfig, checkpoint: Checkpoint, metadata: CheckpointMetadata, _newVersions: Record<string, any>): Promise<RunnableConfig> {
+    async put(config: RunnableConfig, checkpoint: Checkpoint, metadata: CheckpointMetadata): Promise<RunnableConfig> {
         const thread_id = config.configurable?.thread_id;
         console.log(`[FirestoreSaver] Putting checkpoint for thread: ${thread_id}, ID: ${checkpoint.id}`);
         if (!thread_id) {
@@ -151,7 +158,7 @@ export class FirestoreSaver extends BaseCheckpointSaver {
         // Inspecting unknown state structure
         if (checkpoint.channel_values?.messages && Array.isArray(checkpoint.channel_values.messages)) {
             // Casting messages
-            const msgs = checkpoint.channel_values.messages;
+            const msgs = checkpoint.channel_values.messages as Array<Record<string, unknown>>; // Internal LangGraph structure
             if (msgs.length > 0) {
                 const last = msgs[msgs.length - 1];
                 preview = typeof last.content === 'string' ? last.content : JSON.stringify(last.content);
@@ -160,26 +167,17 @@ export class FirestoreSaver extends BaseCheckpointSaver {
             }
         }
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const updateData: any = {
-            latest_checkpoint_id: checkpoint_id,
-            updated_at: Date.now(),
-            preview: preview || "No preview"
-        };
-
-        // If user_id is passed in configurable, save it to the thread doc
-        // This is essential for RLS and filtering threads by user
-        if (config.configurable?.user_id) {
-            updateData.user_id = config.configurable.user_id;
-        }
-
-        await threadRef.set(updateData, { merge: true });
+        await threadRef.set({
+            last_checkpoint_id: checkpoint_id,
+            updated_at: new Date(),
+            preview: preview || undefined
+        }, { merge: true });
 
         return {
             configurable: {
                 thread_id,
-                checkpoint_id: checkpoint.id,
-            }
+                checkpoint_id,
+            },
         };
     }
 }

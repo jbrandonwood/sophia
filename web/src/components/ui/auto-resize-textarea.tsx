@@ -1,46 +1,40 @@
-import * as React from "react";
-import { cn } from "@/lib/utils";
+"use client";
 
-export type AutoResizeTextareaProps = React.TextareaHTMLAttributes<HTMLTextAreaElement>;
+import { useEffect, useRef } from "react";
+import { Textarea } from "./textarea";
 
-export const AutoResizeTextarea = React.forwardRef<HTMLTextAreaElement, AutoResizeTextareaProps>(
-  ({ className, value, onChange, ...props }, ref) => {
-    const textareaRef = React.useRef<HTMLTextAreaElement | null>(null);
+export type AutoResizeTextareaProps = React.ComponentProps<typeof Textarea>;
 
-    // Sync forwarded ref with local ref
-    React.useImperativeHandle(ref, () => textareaRef.current!);
+export function AutoResizeTextarea({
+  className,
+  value,
+  ...props
+}: AutoResizeTextareaProps) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-    const adjustHeight = () => {
-      const textarea = textareaRef.current;
-      if (textarea) {
-        textarea.style.height = "auto";
-        textarea.style.height = `${textarea.scrollHeight}px`;
-      }
-    };
+  const resize = () => {
+    const textarea = textareaRef.current;
+    if (textarea) {
+      textarea.style.height = "auto";
+      textarea.style.height = `${textarea.scrollHeight}px`;
+    }
+  };
 
-    React.useEffect(() => {
-      adjustHeight();
-    }, [value]);
+  useEffect(() => {
+    resize();
+  }, [value]);
 
-    const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-      adjustHeight();
-      if (onChange) {
-        onChange(e);
-      }
-    };
-
-    return (
-      <textarea
-        ref={textareaRef}
-        className={cn(
-          "flex min-h-[56px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50",
-          className
-        )}
-        onChange={handleChange}
-        value={value}
-        {...props}
-      />
-    );
-  }
-);
-AutoResizeTextarea.displayName = "AutoResizeTextarea";
+  return (
+    <Textarea
+      {...props}
+      value={value}
+      ref={textareaRef}
+      className={className}
+      rows={1}
+      onInput={(e) => {
+        resize();
+        props.onInput?.(e);
+      }}
+    />
+  );
+}

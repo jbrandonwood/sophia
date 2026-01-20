@@ -1,56 +1,47 @@
-import { ChatVertexAI } from "@langchain/google-vertexai";
-import { HumanMessage, SystemMessage, BaseMessage } from "@langchain/core/messages";
+import { BaseMessage } from "@langchain/core/messages";
+import { ChatGoogleVertexAI } from "@langchain/google-vertexai";
 
-const TITLE_SYSTEM_PROMPT = `
-You are the Scribe of the Digital Stoa.
-Your task is to read a philosophical dialogue and generate a short, poetic, and meaningful title for it.
+/**
+ * Generates a descriptive title for a conversation based on its first message.
+ * 
+ * @param firstMessage The first human message in the thread
+ * @returns A concise, philosophical title (max 4-5 words)
+ */
+export async function generateConversationTitle(firstMessage: string): Promise<string> {
+    const model = new ChatGoogleVertexAI({
+        model: "gemini-1.5-flash",
+        temperature: 0.1,
+    });
 
-**Rules:**
-1. Maximum 6 words.
-2. Avoid generic phrases like "Chat with AI" or "Conversation about...".
-3. Use a philosophical tone (e.g., "The Nature of Virtue", "On the fragility of time").
-4. If the conversation is just a greeting, return "New Inquiry".
-5. Do not use quotes in the output.
-`;
+    const prompt = `Based on the following user message, generate a 2-4 word "philosophical" title for the discourse.
+Do NOT use quotes. Focus on the core ontological or ethical concept.
+Example input: "Why do we feel pain?" -> Example output: The Nature of Suffering
 
-export async function generateThreadTitle(messages: BaseMessage[]): Promise<string> {
-    try {
-        if (!messages || messages.length === 0) return "New Inquiry";
+Message: ${firstMessage}`;
 
-        // Filter for meaningful content (skip system prompts, empty messages)
-        const dialogue = messages
-            .filter(m => m.content && typeof m.content === 'string')
-            .map(m => {
-                const role = (m as any).role || m.getType();
-                return `${role}: ${m.content}`;
-            })
-            .slice(-4) // Only look at the last few turns to capture the current theme, or maybe all? 
-            // Better to look at the first few + last few? For a title, usually the beginning determines the topic.
-            // Let's take the first 2 user messages and the last 2 messages.
-            .join("\n");
+    const res = await model.invoke(prompt);
+    return res.content.toString().trim();
+}
 
-        if (dialogue.length < 10) return "New Inquiry";
+/**
+ * Extracts a title from a list of messages if available.
+ */
+export function extractTitleFromMessages(messages: BaseMessage[]): string | undefined {
+    // If we have a lot of messages, we might have stored it in metadata or elsewhere,
+    // but typically we'll rely on the initial generation.
+    return undefined;
+}
 
-        const model = new ChatVertexAI({
-            model: "gemini-1.5-pro-002", // Fallback to Pro if Flash is unavailable
-            temperature: 0.3, // Lower temp for consistent titles
-            maxOutputTokens: 20,
-            location: 'us-central1'
-        });
+/**
+ * Formats a message role for display.
+ */
+export function formatRole(role: string): string {
+    return role.toUpperCase();
+}
 
-        const input = [
-            new SystemMessage(TITLE_SYSTEM_PROMPT),
-            new HumanMessage(`Dialogue:\n${dialogue}\n\nTitle:`)
-        ];
-
-        const response = await model.invoke(input);
-        const title = typeof response.content === 'string' ? response.content.trim() : "Philosophical Inquiry";
-
-        // Cleanup
-        return title.replace(/^"|"$/g, '').trim();
-
-    } catch (error) {
-        console.error("Error generating title:", error);
-        return "Philosophical Inquiry";
-    }
+/**
+ * Gets a descriptive type name for a message.
+ */
+export function getMessageType(m: BaseMessage): string {
+    return m.getType();
 }

@@ -1,108 +1,123 @@
 import { db } from "@/lib/firebase/server";
-import { formatDistanceToNow } from "date-fns";
+import { format } from "date-fns";
 import Link from "next/link";
-import { Button } from "@/components/ui/button";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Clock, List, Terminal, AlertCircle } from "lucide-react";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Badge } from "@/components/ui/badge";
 
 export const dynamic = 'force-dynamic';
 
-interface ThreadSummary {
-    id: string;
-    latest_checkpoint_id: string;
-    updated_at: number;
-    preview: string;
-}
-
-export default async function TracesPage() {
+async function getTraceThreads() {
     try {
-        console.log("[TracesPage] Initializing request...");
-        const threadsRef = db.collection("threads");
-
-        console.log("[TracesPage] Querying threads collection...");
-        const snapshot = await threadsRef
+        const snapshot = await db.collection("threads")
             .orderBy("updated_at", "desc")
             .limit(50)
             .get();
 
-        console.log(`[TracesPage] Fetched ${snapshot.size} threads.`);
-
-        const threads = snapshot.docs.map(doc => ({
+        return snapshot.docs.map(doc => ({
             id: doc.id,
             ...doc.data()
-        })) as ThreadSummary[];
+        })) as any[];
+    } catch (e: unknown) {
+        console.error("Error fetching trace threads:", e);
+        throw e;
+    }
+}
 
+export default async function TracesPage() {
+    let threads: any[] = [];
+    let error: Error | null = null;
+
+    try {
+        threads = await getTraceThreads();
+    } catch (e) {
+        error = e as Error;
+    }
+
+    if (error) {
         return (
-            <div className="min-h-screen bg-background text-foreground p-8 font-serif">
-                {/* ... (keep existing JSX structure just passing the threads) ... */}
-                <div className="max-w-4xl mx-auto">
-                    <div className="mb-8 flex items-center justify-between">
+            <div className="flex flex-col h-screen bg-background p-8">
+                <div className="max-w-4xl mx-auto w-full space-y-8">
+                    <div className="flex items-center gap-4 mb-4">
+                        <Link href="/" className="p-2 hover:bg-secondary rounded-full transition-colors">
+                            <ArrowLeft className="w-5 h-5" />
+                        </Link>
+                        <h1 className="text-3xl font-serif">Internal Traces</h1>
+                    </div>
+                    <div className="p-6 border border-destructive/50 bg-destructive/5 rounded-lg flex items-start gap-4 text-destructive">
+                        <AlertCircle className="w-6 h-6 mt-1" />
                         <div>
-                            <Link href="/" className="text-muted-foreground hover:text-primary transition-colors flex items-center gap-2 mb-4">
-                                <ArrowLeft className="w-4 h-4" /> Back to Stoa
-                            </Link>
-                            <h1 className="text-3xl font-bold text-primary">Agent Traces</h1>
-                            <p className="text-muted-foreground font-sans mt-2">
-                                Inspection of recent Socratic dialogues.
-                            </p>
+                            <h2 className="text-lg font-bold">Failed to load traces</h2>
+                            <p className="text-sm opacity-90">Please ensure Firebase connectivity is correctly configured.</p>
                         </div>
                     </div>
-
-                    <div className="border border-border rounded-lg bg-card/50 overflow-hidden">
-                        <table className="w-full text-left text-sm">
-                            <thead className="bg-muted/50 text-muted-foreground font-medium font-sans border-b border-border">
-                                <tr>
-                                    <th className="p-4 w-[200px]">Thread ID</th>
-                                    <th className="p-4">Last Activity</th>
-                                    <th className="p-4">Latest Message</th>
-                                    <th className="p-4 text-right">Action</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-border/40">
-                                {threads.map(thread => (
-                                    <tr key={thread.id} className="hover:bg-muted/30 transition-colors">
-                                        <td className="p-4 font-mono text-xs text-muted-foreground">
-                                            {thread.id.slice(0, 8)}...
-                                        </td>
-                                        <td className="p-4 font-sans text-muted-foreground">
-                                            {thread.updated_at ? formatDistanceToNow(thread.updated_at, { addSuffix: true }) : 'Unknown'}
-                                        </td>
-                                        <td className="p-4 max-w-md truncate text-foreground/80">
-                                            "{thread.preview}"
-                                        </td>
-                                        <td className="p-4 text-right">
-                                            <Link href={`/traces/${thread.id}`}>
-                                                <Button variant="outline" size="sm" className="font-sans text-xs">
-                                                    Inspect
-                                                </Button>
-                                            </Link>
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                        {threads.length === 0 && (
-                            <div className="p-12 text-center text-muted-foreground">
-                                No traces found yet. Start a conversation to see it here.
-                            </div>
-                        )}
-                    </div>
-                </div>
-            </div>
-        );
-    } catch (error: any) {
-        console.error("[TracesPage] Error fetching traces:", error);
-        return (
-            <div className="min-h-screen bg-background text-foreground p-8 font-serif flex items-center justify-center">
-                <div className="border border-red-500/20 bg-red-500/10 p-8 rounded-lg max-w-lg text-center">
-                    <h2 className="text-xl font-bold text-red-500 mb-4">Error Loading Traces</h2>
-                    <p className="text-sm font-mono whitespace-pre-wrap text-left bg-black/20 p-4 rounded mb-4 text-red-300">
-                        {error.message || String(error)}
-                    </p>
-                    <Link href="/">
-                        <Button variant="outline">Back to Stoa</Button>
-                    </Link>
                 </div>
             </div>
         );
     }
+
+    return (
+        <div className="flex flex-col h-screen bg-background">
+            {/* Header */}
+            <header className="p-6 border-b border-secondary/20 flex justify-between items-center bg-background/50 backdrop-blur-md sticky top-0 z-10">
+                <div className="flex items-center gap-4">
+                    <Link href="/" className="p-2 hover:bg-secondary rounded-full transition-colors">
+                        <ArrowLeft className="w-5 h-5" />
+                    </Link>
+                    <div>
+                        <h1 className="text-2xl font-serif">Internal Traces</h1>
+                        <p className="text-xs text-muted-foreground font-sans uppercase tracking-[0.2em]">Diagnostic Execution Logs</p>
+                    </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                    <Badge variant="outline" className="font-mono text-[10px] uppercase">Environment: Production</Badge>
+                </div>
+            </header>
+
+            {/* List */}
+            <main className="flex-1 overflow-hidden bg-secondary/5">
+                <ScrollArea className="h-full">
+                    <div className="max-w-5xl mx-auto p-8">
+                        <div className="grid grid-cols-1 gap-4">
+                            {threads.length === 0 ? (
+                                <div className="text-center py-20 border-2 border-dashed border-secondary/20 rounded-xl">
+                                    <Terminal className="w-12 h-12 mx-auto mb-4 opacity-20" />
+                                    <p className="text-muted-foreground italic">No active traces found in the archive.</p>
+                                </div>
+                            ) : (
+                                threads.map((thread) => (
+                                    <Link key={thread.id} href={`/traces/${thread.id}`}>
+                                        <div className="group p-6 bg-card border border-secondary/20 rounded-xl hover:border-primary/40 hover:shadow-lg transition-all duration-300 flex items-center justify-between">
+                                            <div className="flex items-center gap-6">
+                                                <div className="w-12 h-12 rounded-full bg-secondary/10 flex items-center justify-center group-hover:bg-primary/10 transition-colors">
+                                                    <List className="w-5 h-5 text-muted-foreground group-hover:text-primary transition-colors" />
+                                                </div>
+                                                <div>
+                                                    <h3 className="font-serif text-lg group-hover:text-primary transition-colors">
+                                                        {thread.title || "Untitled Discourse"}
+                                                    </h3>
+                                                    <div className="flex items-center gap-4 mt-1 text-xs text-muted-foreground font-sans uppercase tracking-wider">
+                                                        <span className="flex items-center gap-1">
+                                                            <Clock className="w-3 h-3" />
+                                                            {thread.updated_at ? format(thread.updated_at.toDate ? thread.updated_at.toDate() : new Date(thread.updated_at), "MMM d, HH:mm") : "Recently"}
+                                                        </span>
+                                                        <span className="opacity-40">|</span>
+                                                        <span className="font-mono text-[10px]">{thread.id.substring(0, 8)}</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div className="text-primary opacity-0 group-hover:opacity-100 transition-opacity">
+                                                <ArrowLeft className="w-5 h-5 rotate-180" />
+                                            </div>
+                                        </div>
+                                    </Link>
+                                ))
+                            )}
+                        </div>
+                    </div>
+                </ScrollArea>
+            </main>
+        </div>
+    );
 }
