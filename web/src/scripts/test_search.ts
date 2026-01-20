@@ -1,14 +1,9 @@
-
-import { searchPhilosophicalCorpus } from "../lib/vertex";
+import { searchPhilosophicalCorpus } from "../../lib/ai/search";
 
 async function testSearch() {
-    console.log("Testing Vertex AI Search...");
-    try {
-        const results = await searchPhilosophicalCorpus("What is the nature of justice?", 3);
-        console.log("Search Results:", JSON.stringify(results, null, 2));
-    } catch (error) {
-        console.error("Search Failed:", error);
-    }
+  console.log("Searching corpus...");
+  const results = await searchPhilosophicalCorpus("What is the nature of justice?", 3);
+  console.log("Results:", JSON.stringify(results, null, 2));
 }
 
-testSearch();
+testSearch().catch(console.error);
