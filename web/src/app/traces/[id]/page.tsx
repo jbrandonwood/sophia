@@ -1,7 +1,9 @@
+
 import { db } from "@/lib/firebase/server";
 import Link from "next/link";
 import { ArrowLeft, Clock, Database, MessageSquare, Terminal } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Checkpoint } from "@langchain/langgraph";
 import {
     Accordion,
     AccordionContent,
@@ -21,50 +23,56 @@ interface Citation {
 
 interface LangGraphMessage {
     id?: string;
-    content: string | unknown; // LangGraph content can sometimes be complex, but usually string
+    content: unknown; // LangGraph content can sometimes be complex, but usually string
     kwargs?: {
         content: string;
+        id?: string;
     };
-    getType: () => string;
 }
 
 interface AgentStateValues {
     messages?: LangGraphMessage[];
-    documents?: any[];
-    currentPhase?: 'elicit' | 'examine' | 'challenge' | 'concede' | 'aporia';
     ragCitations?: Citation[];
+    vertexSearchCount?: number;
+    currentPhase?: string;
+    responseStyle?: string;
     __start__?: {
         messages: LangGraphMessage[];
     };
-    [key: string]: Record<string, unknown>;
 }
 
-async function getTraceCheckpoints(threadId: string) {
+export default async function TraceDetailPage({ params }: { params: Promise<{ id: string }> }) {
+    const { id: threadId } = await params;
+
     const snapshot = await db.collection(`threads/${threadId}/checkpoints`)
         .orderBy("created_at", "asc")
         .get();
 
-    return snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-    })) as any[];
-}
-
-export default async function TraceDetailPage({ params }: { params: { id: string } }) {
-    const threadId = params.id;
-    const checkpoints = await getTraceCheckpoints(threadId);
+    const checkpoints = snapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+            id: doc.id,
+            checkpoint: JSON.parse(data.checkpoint) as Checkpoint,
+            metadata: JSON.parse(data.metadata),
+            created_at: data.created_at
+        };
+    });
 
     return (
-        <div className="flex flex-col h-screen bg-background">
+        <div className="flex flex-col h-screen bg-background text-foreground font-serif">
             {/* Header */}
-            <header className="p-6 border-b border-secondary/20 flex justify-between items-center bg-background/50 backdrop-blur-md sticky top-0 z-10">
+            <header className="border-b border-border py-4 px-8 flex items-center justify-between bg-card text-card-foreground">
                 <div className="flex items-center gap-4">
-                    <Link href="/traces" className="p-2 hover:bg-secondary rounded-full transition-colors">
+                    <Link href="/traces" className="text-muted-foreground hover:text-primary transition-colors">
                         <ArrowLeft className="w-5 h-5" />
                     </Link>
                     <div>
-                        <h1 className="text-2xl font-serif">Trace Details</h1>
-                        <p className="text-xs text-muted-foreground font-sans uppercase tracking-[0.2em]">Thread: <span className="font-mono">{threadId}</span></p>
+                        <h1 className="text-xl font-bold text-primary font-mono tracking-tighter">
+                            Trace: {threadId.slice(0, 8)}...
+                        </h1>
+                        <p className="text-xs text-muted-foreground font-sans">
+                            {checkpoints.length} Steps Recorded
+                        </p>
                     </div>
                 </div>
             </header>
@@ -117,12 +125,16 @@ export default async function TraceDetailPage({ params }: { params: { id: string
                                             <div className="space-y-3">
                                                 {state.ragCitations.map((cit, i) => (
                                                     <div key={i} className="flex flex-col gap-1 text-sm bg-background/50 p-2 rounded">
-                                                        <span className="font-bold text-blue-800 dark:text-blue-300 text-[10px] uppercase font-serif tracking-tighter">[{cit.source}]</span>
-                                                        <p className="italic text-muted-foreground line-clamp-3">"{cit.text}"</p>
+                                                        <div className="font-semibold text-foreground/80 font-sans">
+                                                            {cit.source}
+                                                        </div>
+                                                        <div className="text-muted-foreground text-xs pl-2 border-l-2 border-primary/30 italic line-clamp-3 hover:line-clamp-none transition-all">
+                                                            &quot;{cit.text}&quot;
+                                                        </div>
                                                         {cit.uri && (
-                                                            <Link href={cit.uri} target="_blank" className="text-[10px] text-blue-500 hover:underline truncate mt-1">
+                                                            <div className="text-[10px] font-mono text-muted-foreground opacity-70 truncate">
                                                                 {cit.uri}
-                                                            </Link>
+                                                            </div>
                                                         )}
                                                     </div>
                                                 ))}
@@ -152,10 +164,11 @@ export default async function TraceDetailPage({ params }: { params: { id: string
                                     const text = typeof lastMsg.kwargs?.content === 'string' ? lastMsg.kwargs.content : JSON.stringify(lastMsg.kwargs?.content || lastMsg.content);
                                     content = (
                                         <div className="flex flex-col gap-1">
-                                            <div className="p-4 bg-purple-50/50 dark:bg-purple-950/10 rounded-md border border-purple-200 dark:border-purple-900/30">
-                                                <div className="font-serif text-sm prose dark:prose-invert">
-                                                    {text}
-                                                </div>
+                                            <span className="text-[10px] font-bold uppercase text-muted-foreground">
+                                                Agent Output
+                                            </span>
+                                            <div className="p-4 bg-muted text-foreground rounded-lg text-sm whitespace-pre-wrap font-sans border border-border">
+                                                {text}
                                             </div>
                                         </div>
                                     );
@@ -163,49 +176,51 @@ export default async function TraceDetailPage({ params }: { params: { id: string
                             }
 
                             return (
-                                <Card key={step.id} className="border-none shadow-none bg-transparent">
-                                    <div className="flex gap-6 items-start">
-                                        <div className="pt-2 flex flex-col items-center gap-2 group">
-                                            <div className="w-8 h-8 rounded-full border border-primary/20 bg-background flex items-center justify-center text-primary/60 shrink-0">
-                                                {stepIcon}
-                                            </div>
-                                            {index < checkpoints.length - 1 && (
-                                                <div className="w-[1px] h-full min-h-[40px] bg-primary/10" />
-                                            )}
+                                <div key={step.id} className="relative pl-10 border-l-2 border-primary/20 pb-8 last:pb-0 last:border-l-0">
+                                    <div className="absolute -left-[11px] top-0 bg-background p-1 rounded-full border border-primary/20">
+                                        <div className="bg-primary/10 text-primary rounded-full p-1">
+                                            {stepIcon}
                                         </div>
+                                    </div>
 
-                                        <div className="flex-1 space-y-4">
-                                            <div className="flex items-center justify-between">
-                                                <div className="flex items-center gap-2">
-                                                    <span className="font-mono text-xs text-muted-foreground"># {index + 1}</span>
-                                                    <h3 className="font-serif text-lg tracking-tight">{stepTitle}</h3>
-                                                    {phase !== 'unknown' && (
-                                                        <Badge variant="outline" className="text-[10px] uppercase font-mono px-2 py-0 border-primary/20 text-primary">
-                                                            {phase}
-                                                        </Badge>
-                                                    )}
-                                                </div>
-                                                <span className="text-[10px] font-mono opacity-40 uppercase">Source: {source}</span>
+                                    <Card className="border-border bg-card shadow-sm overflow-hidden">
+                                        <CardHeader className="py-3 px-4 bg-muted/20 border-b border-border flex flex-row items-center justify-between space-y-0">
+                                            <div className="flex items-center gap-2">
+                                                <CardTitle className="text-sm font-bold font-mono uppercase tracking-wider text-primary">
+                                                    {stepTitle}
+                                                </CardTitle>
+                                                {state.currentPhase && <Badge variant="outline" className="text-[10px]">{state.currentPhase}</Badge>}
                                             </div>
+                                            <div className="text-xs text-muted-foreground font-mono flex items-center gap-2">
+                                                <Clock className="w-3 h-3" />
+                                                {new Date(step.created_at).toLocaleTimeString()}
+                                            </div>
+                                        </CardHeader>
 
+                                        <CardContent className="p-4 space-y-4">
+                                            {/* Main Content Rendered Above */}
                                             {content}
 
-                                            <Accordion type="single" collapsible>
-                                                <AccordionItem value="state" className="border-none">
-                                                    <AccordionTrigger className="text-[10px] opacity-40 uppercase hover:opacity-100 hover:no-underline font-mono py-1">
-                                                        Inspect Raw State Snapshot
+                                            {/* Debug State Accordion */}
+                                            <Accordion type="single" collapsible className="w-full border-t border-border/50 pt-2">
+                                                <AccordionItem value="debug" className="border-0">
+                                                    <AccordionTrigger className="py-1 text-[10px] uppercase tracking-widest text-muted-foreground hover:no-underline">
+                                                        Raw State (Debug)
                                                     </AccordionTrigger>
                                                     <AccordionContent>
-                                                        <div className="p-4 bg-muted rounded-md text-[10px] font-mono leading-relaxed overflow-x-auto">
-                                                            <pre>{JSON.stringify(state, null, 2)}</pre>
+                                                        <div className="mt-2 text-[10px] font-mono overflow-hidden">
+                                                            <div className="mb-2 font-bold text-muted-foreground">Full Channel Values (Snippet)</div>
+                                                            <pre className="overflow-x-auto p-2 bg-muted/30 rounded border border-border max-h-[200px]">
+                                                                {JSON.stringify(state, null, 2)}
+                                                            </pre>
                                                         </div>
                                                     </AccordionContent>
                                                 </AccordionItem>
                                             </Accordion>
-                                        </div>
-                                    </div>
-                                </Card>
-                            )
+                                        </CardContent>
+                                    </Card>
+                                </div>
+                            );
                         })}
                     </div>
                 </ScrollArea>
