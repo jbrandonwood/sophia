@@ -1,48 +1,56 @@
-import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
-import { SystemMessage, HumanMessage } from "@langchain/core/messages";
+import { ChatVertexAI } from "@langchain/google-vertexai";
+import { HumanMessage, SystemMessage, BaseMessage } from "@langchain/core/messages";
 
-const MODEL_NAME = "gemini-1.5-flash-002"; // Fast, cheap model for metadata
+const TITLE_SYSTEM_PROMPT = `
+You are the Scribe of the Digital Stoa.
+Your task is to read a philosophical dialogue and generate a short, poetic, and meaningful title for it.
 
-// Fire-and-forget title generation
-export async function generateThreadTitle(messages: any[]): Promise<string> {
+**Rules:**
+1. Maximum 6 words.
+2. Avoid generic phrases like "Chat with AI" or "Conversation about...".
+3. Use a philosophical tone (e.g., "The Nature of Virtue", "On the fragility of time").
+4. If the conversation is just a greeting, return "New Inquiry".
+5. Do not use quotes in the output.
+`;
+
+export async function generateThreadTitle(messages: BaseMessage[]): Promise<string> {
     try {
-        const model = new ChatGoogleGenerativeAI({
-            modelName: MODEL_NAME,
+        if (!messages || messages.length === 0) return "New Inquiry";
+
+        // Filter for meaningful content (skip system prompts, empty messages)
+        const dialogue = messages
+            .filter(m => m.content && typeof m.content === 'string')
+            .map(m => {
+                const role = (m as any).role || m.getType();
+                return `${role}: ${m.content}`;
+            })
+            .slice(-4) // Only look at the last few turns to capture the current theme, or maybe all? 
+            // Better to look at the first few + last few? For a title, usually the beginning determines the topic.
+            // Let's take the first 2 user messages and the last 2 messages.
+            .join("\n");
+
+        if (dialogue.length < 10) return "New Inquiry";
+
+        const model = new ChatVertexAI({
+            model: "gemini-1.5-pro-002", // Fallback to Pro if Flash is unavailable
+            temperature: 0.3, // Lower temp for consistent titles
             maxOutputTokens: 20,
-            temperature: 0.5,
-            authOptions: {
-                credentials: {
-                    client_email: process.env.FIREBASE_CLIENT_EMAIL,
-                    private_key: process.env.FIREBASE_PRIVATE_KEY,
-                }
-            }
+            location: 'us-central1'
         });
 
-        // Convert last few messages to text
-        const conversationText = messages.slice(-4).map(m => `${m.role}: ${m.content}`).join('\n');
+        const input = [
+            new SystemMessage(TITLE_SYSTEM_PROMPT),
+            new HumanMessage(`Dialogue:\n${dialogue}\n\nTitle:`)
+        ];
 
-        const prompt = `
-        Summarize the following philosophical dialogue into a short, poetic title (max 6 words). 
-        Avoid "Chat with AI" or generic labels. 
-        Focus on the philosophical mystery or theme (e.g. "Virtue and Happiness", "The Nature of Good").
-        Do not use quotes.
+        const response = await model.invoke(input);
+        const title = typeof response.content === 'string' ? response.content.trim() : "Philosophical Inquiry";
 
-        Dialogue:
-        ${conversationText}
-        `;
+        // Cleanup
+        return title.replace(/^"|"$/g, '').trim();
 
-        const response = await model.invoke([
-            new HumanMessage(prompt)
-        ]);
-
-        const title = typeof response.content === 'string' 
-            ? response.content.trim() 
-            : "Philosophical Inquiry";
-            
-        return title.replace(/['"]/g, '');
-
-    } catch (e) {
-        console.error("Failed to generate title:", e);
-        return "Untitled Inquiry";
+    } catch (error) {
+        console.error("Error generating title:", error);
+        return "Philosophical Inquiry";
     }
 }

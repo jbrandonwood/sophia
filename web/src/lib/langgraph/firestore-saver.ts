@@ -1,145 +1,185 @@
-import { BaseCheckpointSaver, Checkpoint, CheckpointMetadata, CheckpointTuple, SerializerProtocol } from "@langchain/langgraph-checkpoint";
-import { Firestore } from "firebase-admin/firestore";
 
-/**
- * A LangGraph CheckpointSaver that stores state in Google Cloud Firestore.
- * 
- * Schema:
- * - Collection: `threads` (docs)
- *   - Subcollection: `checkpoints` (docs) -> stores the actual state
- *   - Subcollection: `writes` (docs) -> stores side effects/writes (not strictly needed for basic chatbot but good for full compliance)
- */
+import { BaseCheckpointSaver, Checkpoint, CheckpointMetadata, CheckpointTuple } from "@langchain/langgraph";
+import { db } from "../firebase/server";
+import { RunnableConfig } from "@langchain/core/runnables";
+
+interface FirestoreCheckpointData {
+    checkpoint: string; // JSON serialized
+    metadata: string; // JSON serialized
+    parent_config?: {
+        configurable: {
+            thread_id: string;
+            checkpoint_id: string;
+        }
+    };
+    created_at: number; // Timestamp for ordering
+}
+
 export class FirestoreSaver extends BaseCheckpointSaver {
-    private db: Firestore;
-
-    constructor(db: Firestore, serde?: SerializerProtocol) {
-        super(serde);
-        this.db = db;
+    constructor() {
+        super();
     }
 
-    async getTuple(config: { configurable: { thread_id: string; checkpoint_id?: string } }): Promise<CheckpointTuple | undefined> {
-        const threadId = config.configurable.thread_id;
-        const checkpointId = config.configurable.checkpoint_id;
+    async getTuple(config: RunnableConfig): Promise<CheckpointTuple | undefined> {
+        const thread_id = config.configurable?.thread_id;
+        const checkpoint_id = config.configurable?.checkpoint_id;
 
-        if (!threadId) return undefined;
+        if (!thread_id) return undefined;
 
-        try {
-            if (checkpointId) {
-                // Fetch specific checkpoint
-                const docRef = this.db.collection("threads").doc(threadId).collection("checkpoints").doc(checkpointId);
-                const doc = await docRef.get();
-                if (!doc.exists) return undefined;
-                
-                const data = doc.data();
-                if (!data) return undefined;
+        let docPath = `threads/${thread_id}`;
 
-                return {
-                    config,
-                    checkpoint: (await this.serde.loads(data.checkpoint)) as Checkpoint,
-                    metadata: (await this.serde.loads(data.metadata)) as CheckpointMetadata,
-                    parentConfig: data.parent_checkpoint_id ? {
-                        configurable: {
-                            thread_id: threadId,
-                            checkpoint_id: data.parent_checkpoint_id
-                        }
-                    } : undefined
-                };
-            } else {
-                // Fetch latest
-                // We rely on storing a pointer in the parent thread doc or query ordered by id
-                // LangGraph standard pattern: checkpoints are keyed by ID which is checkpointer specific.
-                // We will assume lexicographical sort or timestamp. 
-                // Let's grab the 'latest_checkpoint_id' from the thread metadata if we maintain it, 
-                // OR query the subcollection order by write time.
+        if (checkpoint_id) {
+            docPath += `/checkpoints/${checkpoint_id}`;
+        } else {
+            // If no checkpoint_id provided, we need the latest.
+            // Option A: Read thread_id doc to get HEAD pointer.
+            // Option B: Query checkpoints collection limit 1 desc.
+            // Let's go with Option B for resilience, assuming we index `created_at` or `ts`.
+            // But for MVP, let's look at the thread doc metadata if we store "HEAD" there.
+            const threadDoc = await db.collection("threads").doc(thread_id).get();
+            if (!threadDoc.exists) return undefined;
+            const threadData = threadDoc.data();
+            const latestId = threadData?.latest_checkpoint_id;
 
-                // Strategy 1: Read 'threads/{threadId}' to get 'latest_checkpoint_id'
-                const threadDoc = await this.db.collection("threads").doc(threadId).get();
-                if (!threadDoc.exists) return undefined;
-                
-                const latestId = threadDoc.data()?.latest_checkpoint_id;
-                if (!latestId) return undefined;
+            if (!latestId) return undefined;
+            docPath += `/checkpoints/${latestId}`;
+        }
 
-                return this.getTuple({ configurable: { thread_id: threadId, checkpoint_id: latestId } });
-            }
-        } catch (e) {
-            console.error("Error getting checkpoint tuple", e);
+        const docSnap = await db.doc(docPath).get();
+
+        if (!docSnap.exists) {
             return undefined;
         }
-    }
 
-    async *list(config: { configurable: { thread_id: string } }, startIsBefore?: string, limit?: number): AsyncGenerator<CheckpointTuple> {
-        const threadId = config.configurable.thread_id;
-        // Not critical for basic playback, implementing basic version
-        const query = this.db.collection("threads").doc(threadId).collection("checkpoints").limit(limit || 10);
-        // Ordering would go here...
-        
-        const snapshot = await query.get();
-        for (const doc of snapshot.docs) {
-             const data = doc.data();
-             yield {
-                config: { configurable: { thread_id: threadId, checkpoint_id: doc.id } },
-                checkpoint: (await this.serde.loads(data.checkpoint)) as Checkpoint,
-                metadata: (await this.serde.loads(data.metadata)) as CheckpointMetadata,
-             } as CheckpointTuple;
-        }
-    }
+        const data = docSnap.data() as FirestoreCheckpointData;
+        if (!data || !data.checkpoint) return undefined;
 
-    async put(config: { configurable: { thread_id: string; checkpoint_id?: string } }, checkpoint: Checkpoint, metadata: CheckpointMetadata, newVersions: Record<string, string | number>): Promise<{ configurable: { thread_id: string; checkpoint_id: string } }> {
-        const threadId = config.configurable.thread_id;
-        const checkpointId = checkpoint.id; // LangGraph generates this ID
-
-        // Serialize
-        const serializedCheckpoint = await this.serde.dumps(checkpoint);
-        const serializedMetadata = await this.serde.dumps(metadata);
-
-        const batch = this.db.batch();
-
-        // 1. Write Checkpoint
-        const checkpointRef = this.db.collection("threads").doc(threadId).collection("checkpoints").doc(checkpointId);
-        batch.set(checkpointRef, {
-            checkpoint: serializedCheckpoint,
-            metadata: serializedMetadata,
-            parent_checkpoint_id: config.configurable.checkpoint_id || null,
-            created_at: Date.now()
-        });
-
-        // 2. Update Thread Pointer (Head)
-        // Also store user_id if passed in metadata/config for easy querying later?
-        // LangGraph config is opaque. We can try to extract 'user_id' if we passed it in 'configurable'.
-        const threadRef = this.db.collection("threads").doc(threadId);
-        
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const updatePayload: any = {
-            latest_checkpoint_id: checkpointId,
-            updated_at: Date.now()
-        };
-
-        // If we passed user_id in the configurable, let's look for it (Standard pattern is to pass it in configurable)
-        // Check `config.configurable` for user_id
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const userId = (config.configurable as any).user_id;
-
-        if (userId) {
-            updatePayload.user_id = userId;
-        }
-        
-        // We use set(..., {merge: true}) so we don't overwrite if it exists, but create if it fails
-        batch.set(threadRef, updatePayload, { merge: true });
-
-        await batch.commit();
+        // Parse JSON
+        const checkpoint = JSON.parse(data.checkpoint) as Checkpoint;
+        const metadata = (data.metadata ? JSON.parse(data.metadata) : { source: "update", step: 0, parents: {} }) as CheckpointMetadata;
 
         return {
-             configurable: {
-                 thread_id: threadId,
-                 checkpoint_id: checkpointId
-             }
+            config: {
+                ...config,
+                configurable: {
+                    ...config.configurable,
+                    checkpoint_id: checkpoint.id,
+                }
+            },
+            checkpoint,
+            metadata,
+            parentConfig: data.parent_config
         };
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    async putWrites(config: { configurable: { thread_id: string; checkpoint_id?: string } }, writes: any[], taskId: string): Promise<void> {
-        // Not implemented for this MVP
-        // Writes are side effects.
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any
+    async *list(config: RunnableConfig, _options?: any): AsyncGenerator<CheckpointTuple> {
+        const thread_id = config.configurable?.thread_id;
+        if (!thread_id) return;
+
+        // List all checkpoints for this thread, explicitly specific to current requirements
+        const snapshot = await db.collection(`threads/${thread_id}/checkpoints`)
+            .orderBy('created_at', 'desc')
+            .get();
+
+        for (const doc of snapshot.docs) {
+            const data = doc.data() as FirestoreCheckpointData;
+            const checkpoint = JSON.parse(data.checkpoint) as Checkpoint;
+            const metadata = JSON.parse(data.metadata) as CheckpointMetadata;
+
+            yield {
+                config: {
+                    configurable: {
+                        thread_id,
+                        checkpoint_id: checkpoint.id,
+                    }
+                },
+                checkpoint,
+                metadata,
+                parentConfig: data.parent_config
+            };
+        }
+    }
+
+    async deleteThread(threadId: string): Promise<void> {
+        // Not implemented for MVP
         return;
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars
+    async putWrites(_config: RunnableConfig, _writes: any[], _taskId: string): Promise<void> {
+        // Not implemented for MVP
+        return;
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    async put(config: RunnableConfig, checkpoint: Checkpoint, metadata: CheckpointMetadata, _newVersions: Record<string, any>): Promise<RunnableConfig> {
+        const thread_id = config.configurable?.thread_id;
+        console.log(`[FirestoreSaver] Putting checkpoint for thread: ${thread_id}, ID: ${checkpoint.id}`);
+        if (!thread_id) {
+            console.error("[FirestoreSaver] Missing thread_id config!");
+            throw new Error("Missing thread_id in config");
+        }
+
+        const checkpoint_id = checkpoint.id;
+
+        // 1. Save the checkpoint to subcollection
+        const checkpointRef = db.collection(`threads/${thread_id}/checkpoints`).doc(checkpoint_id);
+
+        const data: FirestoreCheckpointData = {
+            checkpoint: JSON.stringify(checkpoint),
+            metadata: JSON.stringify(metadata),
+            parent_config: {
+                configurable: {
+                    thread_id,
+                    checkpoint_id: config.configurable?.checkpoint_id || checkpoint.id,
+                }
+            },
+            created_at: Date.now()
+        };
+
+        await checkpointRef.set(data);
+
+        // 2. Update the parent thread doc with pointer to HEAD
+        // We also want to store some metadata on the thread itself for the list view
+        const threadRef = db.collection("threads").doc(thread_id);
+
+        // Extract basic info for the thread list
+        // Try to get the last message text if available in standard format
+        // This is generic handling; specific handling might be needed if state structure varies
+        let preview = "";
+        // Inspecting unknown state structure
+        if (checkpoint.channel_values?.messages && Array.isArray(checkpoint.channel_values.messages)) {
+            // Casting messages
+            const msgs = checkpoint.channel_values.messages;
+            if (msgs.length > 0) {
+                const last = msgs[msgs.length - 1];
+                preview = typeof last.content === 'string' ? last.content : JSON.stringify(last.content);
+                // Truncate
+                if (preview.length > 100) preview = preview.substring(0, 100) + "...";
+            }
+        }
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const updateData: any = {
+            latest_checkpoint_id: checkpoint_id,
+            updated_at: Date.now(),
+            preview: preview || "No preview"
+        };
+
+        // If user_id is passed in configurable, save it to the thread doc
+        // This is essential for RLS and filtering threads by user
+        if (config.configurable?.user_id) {
+            updateData.user_id = config.configurable.user_id;
+        }
+
+        await threadRef.set(updateData, { merge: true });
+
+        return {
+            configurable: {
+                thread_id,
+                checkpoint_id: checkpoint.id,
+            }
+        };
     }
 }

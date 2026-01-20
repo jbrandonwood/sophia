@@ -59,7 +59,7 @@ export async function searchPhilosophicalCorpus(
                 pageSize: 3,
                 contentSearchSpec: {
                     snippetSpec: { returnSnippet: true },
-                    // extractiveContentSpec: { maxExtractiveAnswerCount: 1 }
+                    extractiveContentSpec: { maxExtractiveAnswerCount: 1, maxExtractiveSegmentCount: 1 }
                 }
             })
         });
@@ -81,16 +81,29 @@ export async function searchPhilosophicalCorpus(
                 const docData = result.document?.derivedStructData;
                 const structData = result.document?.structData;
 
-                if (!docData) continue;
+                if (!docData && !structData) continue;
 
-                const snippet = docData.snippets?.[0]?.snippet || docData.extractive_answers?.[0]?.content;
+                // Priority: Extractive Segment (Best context) > Extractive Answer > Snippet > Full Content (Fallback)
+                let text = "";
+
+                if (docData?.extractive_segments?.[0]?.content) {
+                    text = docData.extractive_segments[0].content;
+                } else if (docData?.extractive_answers?.[0]?.content) {
+                    text = docData.extractive_answers[0].content;
+                } else if (docData?.snippets?.[0]?.snippet) {
+                    text = docData.snippets[0].snippet;
+                } else if (structData?.text) {
+                    // Fallback to unstructured text if available
+                    text = structData.text.substring(0, 500) + "...";
+                }
+
                 const sourceTitle = structData?.title || "Unknown Source";
                 const sourceAuthor = structData?.author || "Unknown Author";
 
-                if (snippet) {
+                if (text) {
                     citations.push({
                         source: `${sourceAuthor}, ${sourceTitle}`,
-                        text: snippet,
+                        text: text, // potentially contains HTML <b> tags
                         uri: result.document?.name
                     });
                 }
