@@ -2,24 +2,34 @@
 description: Sync with GitHub and deploy the Next.js application to Google Cloud Run
 ---
 
-1. **Pre-Flight Check**:
-   - Run `npm run lint` and `npm run build` locally to catch compilation errors.
-2. **Git Sync**:
-   - Ensure the local codebase is versioned and synced.
-   - `git add .`
-   - `git commit -m "deploy: manual production update"`
-   - `git push origin main`
-   - *Note: Since you have a GitOps architecture, this push might also trigger your GitHub Actions pipeline. This workflow serves as a manual override/confirmation.*
-3. **Docker Build**:
-   - Build the container image.
-   - `docker build -t gcr.io/[PROJECT_ID]/sophia-web:latest .`
-4. **Push to Registry**:
-   - `docker push gcr.io/[PROJECT_ID]/sophia-web:latest`
-5. **Deploy Service**:
-   - Deploy to Cloud Run using the `gcloud` CLI.
-   - // turbo
-   - `gcloud run deploy sophia-web --image gcr.io/[PROJECT_ID]/sophia-web:latest --region us-central1 --allow-unauthenticated`
-6. **Smoke Test**:
-   - Visit the Service URL.
-   - Verify the "Digital Stoa" styling loads correctly.
-   - Perform one "Socratic Turn" to verify Vertex AI connectivity.
+### Deployment Workflow: Sophia (Digital Stoa)
+
+This workflow ensures the latest Socratic logic is synchronized with GitHub and deployed to Google Cloud Run.
+
+#### 1. Pre-Deployment Check
+Run local verification to ensure zero lint errors and successful compilation.
+```bash
+cd web
+npm run lint && npm run build
+```
+
+#### 2. Git Sync (GitHub MCP)
+// turbo
+**IMPORTANT**: Use the GitHub MCP `push_files` tool to synchronize local changes. This is more reliable for large batches of files.
+1. Stage all relevant files.
+2. Commit with a descriptive message (e.g., `feat: resolve ontological drift in analyst node`).
+3. Push to `main`.
+*Note: If local Git is available, you can alternatively use `git push origin main`.*
+
+#### 3. Documentation Audit
+Ensure all architecture changes are reflected in `/context/agent-system.md` and appropriate `README.md` files.
+
+#### 4. Cloud Run Deployment
+The GitHub Actions pipeline will automatically trigger upon push to `main`. 
+Monitor progress here: [GitHub Actions Logs](https://github.com/jbrandonwood/sophia/actions)
+
+#### 5. Verification
+Once the build is complete:
+1. Access the production URL.
+2. Verify the "Internal Traces" page for data consistency.
+3. Test a new Socratic inquiry to ensure the LangGraph state machine is healthy.
