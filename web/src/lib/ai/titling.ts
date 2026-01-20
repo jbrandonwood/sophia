@@ -1,47 +1,59 @@
-import { BaseMessage } from "@langchain/core/messages";
-import { ChatGoogleVertexAI } from "@langchain/google-vertexai";
+import { ChatVertexAI } from "@langchain/google-vertexai";
+import { HumanMessage, SystemMessage, BaseMessage } from "@langchain/core/messages";
 
-/**
- * Generates a descriptive title for a conversation based on its first message.
- * 
- * @param firstMessage The first human message in the thread
- * @returns A concise, philosophical title (max 4-5 words)
- */
-export async function generateConversationTitle(firstMessage: string): Promise<string> {
-    const model = new ChatGoogleVertexAI({
-        model: "gemini-1.5-flash",
-        temperature: 0.1,
-    });
+const TITLE_SYSTEM_PROMPT = `
+You are the Scribe of the Digital Stoa.
+Your task is to read a philosophical dialogue and generate a short, poetic, and meaningful title for it.
 
-    const prompt = `Based on the following user message, generate a 2-4 word "philosophical" title for the discourse.
-Do NOT use quotes. Focus on the core ontological or ethical concept.
-Example input: "Why do we feel pain?" -> Example output: The Nature of Suffering
+**Rules:**
+1. Maximum 6 words.
+2. Avoid generic phrases like "Chat with AI" or "Conversation about...".
+3. Use a philosophical tone (e.g., "The Nature of Virtue", "On the fragility of time").
+4. If the conversation is just a greeting, return "New Inquiry".
+5. Do not use quotes in the output.
+`;
 
-Message: ${firstMessage}`;
+export async function generateThreadTitle(messages: BaseMessage[]): Promise<string> {
+    try {
+        if (!messages || messages.length === 0) return "New Inquiry";
 
-    const res = await model.invoke(prompt);
-    return res.content.toString().trim();
-}
+        // Filter for meaningful content (skip system prompts, empty messages)
+        const allLines = messages
+            .filter(m => m.content && typeof m.content === 'string')
+            .map(m => {
+                const role = m.getType();
+                return `${role}: ${m.content}`;
+            });
 
-/**
- * Extracts a title from a list of messages if available.
- */
-export function extractTitleFromMessages(messages: BaseMessage[]): string | undefined {
-    // If we have a lot of messages, we might have stored it in metadata or elsewhere,
-    // but typically we'll rely on the initial generation.
-    return undefined;
-}
+        // Use first message + last 3 turns
+        const sample = allLines.length > 4
+            ? [allLines[0], ...allLines.slice(-3)]
+            : allLines;
 
-/**
- * Formats a message role for display.
- */
-export function formatRole(role: string): string {
-    return role.toUpperCase();
-}
+        const dialogue = sample.join("\n");
 
-/**
- * Gets a descriptive type name for a message.
- */
-export function getMessageType(m: BaseMessage): string {
-    return m.getType();
+        if (dialogue.length < 10) return "New Inquiry";
+
+        const model = new ChatVertexAI({
+            model: "gemini-3-flash-preview",
+            temperature: 0.3, // Lower temp for consistent titles
+            maxOutputTokens: 20,
+            location: 'global'
+        });
+
+        const input = [
+            new SystemMessage(TITLE_SYSTEM_PROMPT),
+            new HumanMessage(`Dialogue:\n${dialogue}\n\nTitle:`)
+        ];
+
+        const response = await model.invoke(input);
+        const title = typeof response.content === 'string' ? response.content.trim() : "Philosophical Inquiry";
+
+        // Cleanup
+        return title.replace(/^"|"$/g, '').trim();
+
+    } catch (error) {
+        console.error("Error generating title:", error);
+        return "Philosophical Inquiry";
+    }
 }
