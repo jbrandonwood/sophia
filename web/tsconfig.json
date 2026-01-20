@@ -39,6 +39,7 @@
   "exclude": [
     "node_modules",
     "scripts",
+    "src/scripts",
     "test-*.ts",
     "**/*.test.ts",
     "*.js"
