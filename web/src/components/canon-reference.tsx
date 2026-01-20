@@ -23,7 +23,7 @@ export function CanonReference({ citation, snippet, children }: CanonReferencePr
                     <div className="space-y-2">
                         <h4 className="text-sm font-bold font-serif text-primary border-b border-primary/10 pb-1">{citation}</h4>
                         <p className="text-sm text-foreground/80 leading-relaxed font-serif italic">
-                            "{snippet}"
+                            &quot;{snippet}&quot;
                         </p>
                     </div>
                 </div>

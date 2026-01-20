@@ -7,6 +7,7 @@ import {
     SheetTrigger,
 } from "@/components/ui/sheet"
 import { Scroll, BookOpen } from "lucide-react"
+import Link from "next/link"
 
 export function LogicSidebar() {
     return (
@@ -31,14 +32,14 @@ export function LogicSidebar() {
                             Current Thesis
                         </h4>
                         <p className="text-lg text-foreground italic leading-relaxed">
-                            "Awaiting initial proposition..."
+                            &quot;Awaiting initial proposition...&quot;
                         </p>
                     </div>
 
                     <div className="pt-4 border-t border-border">
-                        <a href="/traces" className="text-xs text-muted-foreground hover:text-primary transition-colors font-sans flex items-center gap-2">
+                        <Link href="/traces" className="text-xs text-muted-foreground hover:text-primary transition-colors font-sans flex items-center gap-2">
                             View Agent Traces &rarr;
-                        </a>
+                        </Link>
                     </div>
                 </div>
             </SheetContent>

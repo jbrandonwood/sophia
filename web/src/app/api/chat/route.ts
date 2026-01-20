@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getApp } from '@/agent/graph';
-import { HumanMessage } from '@langchain/core/messages';
+import { HumanMessage, AIMessage, SystemMessage } from '@langchain/core/messages';
 import { auth } from '@/lib/firebase/server';
 
 export const maxDuration = 60;
@@ -47,7 +47,7 @@ export async function POST(req: NextRequest) {
 
         // Background Task: Generate Title (Fire-and-forget-ish)
         // We only generate if it's a relatively new thread to save costs/latency
-        if (messages.length > 2 && messages.length < 10) {
+        if (messages.length >= 1 && messages.length < 10) {
             (async () => {
                 try {
                     const { generateThreadTitle } = await import('@/lib/ai/titling');
@@ -74,9 +74,24 @@ export async function POST(req: NextRequest) {
             }
         })();
 
+        let inputMessages;
+        if (!threadId) {
+            // New thread: Pass all messages to ensure initial prompt is saved
+            console.log(`[API/Chat] [${runId}] New thread detected. passing full history.`);
+            inputMessages = messages.map((m: any) => {
+                if (m.role === 'user') return new HumanMessage(m.content);
+                if (m.role === 'assistant') return new AIMessage(m.content);
+                if (m.role === 'system') return new SystemMessage(m.content);
+                return new HumanMessage(m.content); // Default
+            });
+        } else {
+            // Existing thread: Only pass the new message
+            inputMessages = [new HumanMessage(lastMessageContent)];
+        }
+
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const input: any = {
-            messages: [new HumanMessage(lastMessageContent)],
+            messages: inputMessages,
         };
 
         const stream = await app.streamEvents(input, {
@@ -96,12 +111,18 @@ export async function POST(req: NextRequest) {
                     for await (const event of stream) {
                         // Text Delta (0)
                         if (event.event === "on_chat_model_stream") {
-                            const content = event.data?.chunk?.content;
-                            console.log(`[API/Chat] [${runId}] Model Stream Content:`, content ? content.substring(0, 20) + "..." : "EMPTY");
-                            if (content && typeof content === 'string') {
-                                // Protocol: 0:"content"\n
-                                controller.enqueue(encoder.encode(`0:${JSON.stringify(content)}\n`));
-                                hasSentContent = true;
+                            const tags = event.tags || [];
+                            const isVisibleNode = tags.includes("interlocutor") || tags.includes("synthesizer");
+
+                            // Only stream if it comes from a visible node
+                            if (isVisibleNode) {
+                                const content = event.data?.chunk?.content;
+                                // console.log(`[API/Chat] [${runId}] Model Stream Content:`, content ? content.substring(0, 20) + "..." : "EMPTY");
+                                if (content && typeof content === 'string') {
+                                    // Protocol: 0:"content"\n
+                                    controller.enqueue(encoder.encode(`0:${JSON.stringify(content)}\n`));
+                                    hasSentContent = true;
+                                }
                             }
                         } else if (event.event === "on_chain_end" && event.name === "LangGraph") {
                             console.log(`[API/Chat] [${runId}] Graph Execution Completed.`);
