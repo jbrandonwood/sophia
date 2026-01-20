@@ -12,6 +12,14 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    "src/scripts/**",
+    "test-*.ts",
+    "test-*.js",
+    "validate-env.js",
+    "verify-key.js",
+    "src/debug_imports.ts",
+    "src/debug_init.ts",
+    "src/reproduce_issue_mock.ts",
   ]),
 ]);
 

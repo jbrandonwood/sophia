@@ -1,0 +1,12 @@
+
+src/scripts/*
+test-*.ts
+test-*.js
+validate-env.js
+verify-key.js
+debug_imports.ts
+debug_init.ts
+reproduce_issue_mock.ts
+src/debug_imports.ts
+src/debug_init.ts
+src/reproduce_issue_mock.ts
