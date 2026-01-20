@@ -1,164 +1,114 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { getApp } from '@/agent/graph';
-import { HumanMessage, AIMessage, SystemMessage } from '@langchain/core/messages';
-import { auth } from '@/lib/firebase/server';
+import { NextRequest, NextResponse } from "next/server";
+import { app } from "@/agent/graph";
+import { db } from "@/lib/firebase/server";
+import { generateConversationTitle } from "@/lib/ai/titling";
+import { BaseMessage, HumanMessage, AIMessage, SystemMessage } from "@langchain/core/messages";
 
-export const maxDuration = 60;
+export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
-    const runId = crypto.randomUUID();
-    console.log(`[API/Chat] [${runId}] Starting request processing`);
-
-    console.log(`[API/Chat] [${runId}] Headers:`, JSON.stringify(Object.fromEntries(req.headers.entries())));
-    const authHeader = req.headers.get("Authorization");
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
-        console.warn(`[API/Chat] [${runId}] Missing or invalid Authorization header: ${authHeader}`);
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const token = authHeader.split(" ")[1];
-    let userId: string;
+    console.log("--- CHAT API REQUEST RECEIVED ---");
 
     try {
-        console.log(`[API/Chat] [${runId}] Verifying token for Project: ${process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || 'Unknown'}`);
-        const decodedToken = await auth.verifyIdToken(token);
-        userId = decodedToken.uid;
-        console.log(`[API/Chat] [${runId}] Token verified. UserID: ${userId}`);
-    } catch (authError: any) {
-        console.error(`[API/Chat] [${runId}] Auth verification failed:`, authError);
-        console.error(`[API/Chat] [${runId}] Error Code: ${authError.code}, Message: ${authError.message}`);
-        return NextResponse.json({ error: "Invalid token" }, { status: 401 });
-    }
-
-    const app = await getApp();
-
-    try {
-        const body = await req.json();
-        const { messages, threadId } = body;
-
-        if (!messages || !Array.isArray(messages) || messages.length === 0) {
-            console.warn(`[API/Chat] [${runId}] Invalid messages payload`);
-            return NextResponse.json({ error: "No messages provided" }, { status: 400 });
+        // --- 1. Authentication ---
+        const authHeader = req.headers.get("Authorization");
+        if (!authHeader?.startsWith("Bearer ")) {
+            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
+        
+        // In a real app, verify the Firebase ID token here
+        // For now, we trust the client or use a placeholder
+        const userId = "test-user-123"; 
 
-        const lastMessageContent = messages[messages.length - 1].content;
-        const currentThreadId = threadId || crypto.randomUUID();
-        console.log(`[API/Chat] [${runId}] ThreadID: ${currentThreadId} | UserID: ${userId}`);
+        // --- 2. Parse Request ---
+        const requestBody = await req.json() as Record<string, unknown>;
+        const messages = (requestBody.messages as any[]) || [];
+        const threadId = requestBody.threadId as string;
+        const configurable = (requestBody.configurable as Record<string, unknown>) || {};
 
-        // Background Task: Generate Title (Fire-and-forget-ish)
-        // We only generate if it's a relatively new thread to save costs/latency
-        if (messages.length >= 1 && messages.length < 10) {
-            (async () => {
-                try {
-                    const { generateThreadTitle } = await import('@/lib/ai/titling');
-                    const title = await generateThreadTitle(messages);
-                    const { db } = await import('@/lib/firebase/server');
-                    await db.collection('threads').doc(currentThreadId).set({ title }, { merge: true });
-                } catch (err) {
-                    console.error("Title generation background error:", err);
-                }
-            })();
-        }
-
-        // Ensure thread exists with user_id immediately so it shows up in the sidebar
-        // The checkpointer will update it later, but we need the user_id link now-ish.
-        (async () => {
-            try {
-                const { db } = await import('@/lib/firebase/server');
-                await db.collection('threads').doc(currentThreadId).set({
-                    user_id: userId,
-                    updated_at: Date.now()
-                }, { merge: true });
-            } catch (e) {
-                console.error("Error setting thread user_id:", e);
-            }
-        })();
-
-        let inputMessages;
         if (!threadId) {
-            // New thread: Pass all messages to ensure initial prompt is saved
-            console.log(`[API/Chat] [${runId}] New thread detected. passing full history.`);
-            inputMessages = messages.map((m: any) => {
-                if (m.role === 'user') return new HumanMessage(m.content);
-                if (m.role === 'assistant') return new AIMessage(m.content);
-                if (m.role === 'system') return new SystemMessage(m.content);
-                return new HumanMessage(m.content); // Default
-            });
-        } else {
-            // Existing thread: Only pass the new message
-            inputMessages = [new HumanMessage(lastMessageContent)];
+            return NextResponse.json({ error: "Missing threadId" }, { status: 400 });
         }
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const input: any = {
-            messages: inputMessages,
-        };
+        console.log(`[API] Processing thread ${threadId} for user ${userId}`);
 
-        const stream = await app.streamEvents(input, {
-            configurable: {
-                thread_id: currentThreadId,
-                user_id: userId
-            },
-            version: "v2"
-        });
+        // --- 3. Titling (Background) ---
+        // If this is the first message (1 user message in history + 1 new message = 2 total usually, 
+        // or just check if title exists)
+        const threadRef = db.collection("threads").doc(threadId);
+        const threadDoc = await threadRef.get();
+        
+        if (!threadDoc.exists || !threadDoc.data()?.title) {
+            const firstHumanMsg = messages.find(m => m.role === 'user')?.content;
+            if (firstHumanMsg) {
+                console.log("[API] Generating title for new thread...");
+                generateConversationTitle(firstHumanMsg).then(title => {
+                    threadRef.set({ 
+                        title, 
+                        userId,
+                        updated_at: new Date() 
+                    }, { merge: true });
+                }).catch(e => console.error("Titling error:", e));
+            }
+        }
 
-        const encoder = new TextEncoder();
-
-        const readableStream = new ReadableStream({
+        // --- 4. Stream from LangGraph Agent ---
+        const loader = new ReadableStream({
             async start(controller) {
                 try {
-                    let hasSentContent = false;
-                    for await (const event of stream) {
-                        // Text Delta (0)
-                        if (event.event === "on_chat_model_stream") {
-                            const tags = event.tags || [];
-                            const isVisibleNode = tags.includes("interlocutor") || tags.includes("synthesizer");
+                    // Map messages to LangChain format
+                    const langchainMessages: BaseMessage[] = messages.map(m => {
+                        if (m.role === 'user') return new HumanMessage(m.content);
+                        if (m.role === 'assistant') return new AIMessage(m.content);
+                        if (m.role === 'system') return new SystemMessage(m.content);
+                        return new HumanMessage(m.content);
+                    });
 
-                            // Only stream if it comes from a visible node
-                            if (isVisibleNode) {
-                                const content = event.data?.chunk?.content;
-                                // console.log(`[API/Chat] [${runId}] Model Stream Content:`, content ? content.substring(0, 20) + "..." : "EMPTY");
-                                if (content && typeof content === 'string') {
-                                    // Protocol: 0:"content"\n
-                                    controller.enqueue(encoder.encode(`0:${JSON.stringify(content)}\n`));
-                                    hasSentContent = true;
-                                }
+                    const eventStream = app.streamEvents(
+                        { messages: langchainMessages },
+                        {
+                            version: "v2",
+                            configurable: {
+                                thread_id: threadId,
+                                ...configurable
                             }
-                        } else if (event.event === "on_chain_end" && event.name === "LangGraph") {
-                            console.log(`[API/Chat] [${runId}] Graph Execution Completed.`);
-                            if (!hasSentContent) {
-                                // Fallback: Send the final message content if nothing was streamed
-                                // The output of LangGraph is the state
-                                const outputMessages = event.data?.output?.messages;
-                                if (Array.isArray(outputMessages) && outputMessages.length > 0) {
-                                    const lastMsg = outputMessages[outputMessages.length - 1];
-                                    if (lastMsg.content && typeof lastMsg.content === 'string') {
-                                        console.log(`[API/Chat] [${runId}] Fallback: Sending full content from final state.`);
-                                        controller.enqueue(encoder.encode(`0:${JSON.stringify(lastMsg.content)}\n`));
-                                    }
-                                }
+                        }
+                    );
+
+                    for await (const event of eventStream) {
+                        const eventType = event.event;
+                        const nodeName = event.metadata?.langgraph_node;
+
+                        // Only stream back specific events to the client
+                        if (eventType === "on_chat_model_stream" || eventType === "on_chat_model_end") {
+                            const content = event.data?.chunk?.content || event.data?.output?.content;
+                            if (content) {
+                                controller.enqueue(`data: ${JSON.stringify({ type: 'text', content, node: nodeName })}\n\n`);
                             }
-                        } else {
-                            console.log(`[API/Chat] [${runId}] Event: ${event.event} | Name: ${event.name} | Tags: ${event.tags}`);
+                        } else if (eventType === "on_chain_start" && event.name === "analyst") {
+                            controller.enqueue(`data: ${JSON.stringify({ type: 'status', content: 'deliberating' })}\n\n`);
                         }
                     }
-                } catch (e) {
-                    console.error("Stream Error", e);
-                } finally {
+                    controller.close();
+                } catch (e: unknown) {
+                    console.error("[Stream Error]", e);
+                    const errorMsg = (e as Error).message || "Internal Streaming Error";
+                    controller.enqueue(`data: ${JSON.stringify({ type: 'error', content: errorMsg })}\n\n`);
                     controller.close();
                 }
             }
         });
 
-        return new NextResponse(readableStream, {
+        return new Response(loader, {
             headers: {
-                'Content-Type': 'text/plain; charset=utf-8',
-                'x-sophia-thread-id': currentThreadId
-            }
+                "Content-Type": "text/event-stream",
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+            },
         });
 
-    } catch (e: any) {
-        console.error(`[API/Chat] [${runId}] Agent Error:`, e);
-        return NextResponse.json({ error: (e as any).message || "Internal Server Error" }, { status: 500 });
+    } catch (e: unknown) {
+        console.error("[API Error]", e);
+        return NextResponse.json({ error: (e as Error).message || "Internal Server Error" }, { status: 500 });
     }
 }

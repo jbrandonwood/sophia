@@ -1,278 +1,338 @@
 "use client";
 
-import { useAuth } from "@/context/auth-context";
-import { DialogueStream } from "@/components/chat/DialogueStream";
-import { LogicSidebar } from "@/components/logic-sidebar";
-import { HistorySidebar } from "@/components/history-sidebar";
-import { Separator } from "@/components/ui/separator";
-import { UserSettingsMenu } from "@/components/user-settings-menu";
-
-import { AutoResizeTextarea } from "@/components/ui/auto-resize-textarea";
-import { useState, useEffect, useRef } from "react";
-import { getThreadMessages } from "@/actions/history";
-
+import { useEffect, useState, useRef } from "react";
+import { MessageSquare, Send, Trash2, History, Terminal, LogOut, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Send } from "lucide-react";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { v4 as uuidv4 } from "uuid";
+import { generateInitialPrompt } from "@/lib/ai/prompts";
+import { AutoResizeTextarea } from "@/components/ui/auto-resize-textarea";
+import { useAuth } from "@/components/providers/auth-provider";
+import { auth } from "@/lib/firebase/client";
+import { getConversationHistoryFromClient } from "@/actions/history";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+
+interface Message {
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+}
+
+interface Thread {
+  id: string;
+  title: string;
+  updated_at: Date;
+}
 
 export default function Home() {
-  const { user, signOut } = useAuth();
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { user, loading: authLoading } = useAuth();
+  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
-  const [threadId, setThreadId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [threadId, setThreadId] = useState<string>("");
+  const [history, setHistory] = useState<Thread[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  
+  const scrollRef = useRef<HTMLDivElement>(null);
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [messages, setMessages] = useState<any[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [error, setError] = useState<any>(null);
-  const data = undefined; // Placeholder for thinking stream
-  const formRef = useRef<HTMLFormElement>(null);
+  // Initialize a new thread
+  const startNewInquiry = async () => {
+    const newId = uuidv4();
+    setThreadId(newId);
+    setMessages([]);
+    setError(null);
+    setInput("");
+    
+    // Generate initial philosophical prompt
+    try {
+      const prompt = await generateInitialPrompt();
+      setMessages([{ role: 'assistant', content: prompt }]);
+    } catch (e) {
+      setMessages([{ role: 'assistant', content: "Greetings. What fundamental truth shall we examine today?" }]);
+    }
+  };
 
-  // Initial greeting state
-  const [initialMessage, setInitialMessage] = useState<string>("The unexamined life is not worth living. Do you agree?");
-  const hasFetchedPrompt = useRef(false);
-  const ignoreHistoryFetch = useRef(false);
+  // Load history from Firestore
+  const loadHistory = async () => {
+    if (user) {
+      const pastThreads = await getConversationHistoryFromClient(user.uid);
+      setHistory(pastThreads.map(t => ({
+        ...t,
+        updated_at: t.updated_at instanceof Date ? t.updated_at : new Date(t.updated_at)
+      })));
+    }
+  };
 
-  // Load Initial Prompt
   useEffect(() => {
-    // Only fetch if we don't have a thread ID and haven't fetched yet
-    if (!threadId && !hasFetchedPrompt.current) {
-      hasFetchedPrompt.current = true;
-      fetch('/api/prompt/initial')
-        .then(res => res.json())
-        .then(data => {
-          if (data.prompt) {
-            setInitialMessage(data.prompt);
-            // Update messages if we are still showing the initial state
-            setMessages(current => {
-              if (current.length === 1 && current[0].id === '1') {
-                return [{
-                  id: '1',
-                  role: 'assistant',
-                  content: data.prompt
-                }];
-              }
-              return current;
+    if (!authLoading && user) {
+      startNewInquiry();
+      loadHistory();
+    }
+  }, [user, authLoading]);
+
+  // Handle scroll
+  useEffect(() => {
+    if (scrollRef.current) {
+        const scrollContainer = scrollRef.current.querySelector('[data-radix-scroll-area-viewport]');
+        if (scrollContainer) {
+            scrollContainer.scrollTo({
+                top: scrollContainer.scrollHeight,
+                behavior: 'smooth'
             });
-          }
-        })
-        .catch(err => console.error("Failed to fetch prompt:", err));
-    }
-  }, [threadId]);
-
-  // Load Request
-  useEffect(() => {
-    async function load() {
-      if (!threadId) {
-        setMessages([{
-          id: '1',
-          role: 'assistant',
-          content: initialMessage
-        }]);
-        return;
-      }
-
-      if (ignoreHistoryFetch.current) {
-        ignoreHistoryFetch.current = false;
-        return;
-      }
-
-      setIsLoading(true);
-      try {
-        const history = await getThreadMessages(threadId);
-        if (history && history.length > 0) {
-          setMessages(history);
-        } else {
-          setMessages([{
-            id: '1',
-            role: 'assistant',
-            content: initialMessage
-          }]);
         }
-      } catch (e) {
-        console.error("Failed to load thread", e);
-        setMessages([{
-          id: '1',
-          role: 'assistant',
-          content: initialMessage
-        }]);
-      } finally {
-        setIsLoading(false);
-      }
     }
-    load();
-  }, [threadId]);
-
-
-  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setInput(e.target.value);
-  };
-
-  const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      if (formRef.current) {
-        formRef.current.requestSubmit();
-      }
-    }
-  };
+  }, [messages]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim() || isLoading) return;
-    if (!user) return; // Guard
+    if (!input.trim() || loading) return;
 
-    const userContent = input;
+    const userMessage = input.trim();
     setInput("");
-    setIsLoading(true);
+    setError(null);
 
-    // Optimistic update
-    const newMessages = [
-      ...messages,
-      { id: Date.now().toString(), role: 'user', content: userContent }
-    ];
+    // Optimistically update
+    const newMessages: Message[] = [...messages, { role: 'user', content: userMessage }];
     setMessages(newMessages);
+    setLoading(true);
 
     try {
-      // Get ID token
-      const token = await user.getIdToken();
-
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
+      const token = await auth.currentUser?.getIdToken();
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: { 
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${token}` 
         },
         body: JSON.stringify({
           messages: newMessages,
-          threadId: threadId
-        })
+          threadId: threadId,
+        }),
       });
 
-      if (!response.ok) throw new Error(response.statusText);
-
-      const threadHeader = response.headers.get('x-sophia-thread-id');
-      if (threadHeader && threadHeader !== threadId) {
-        ignoreHistoryFetch.current = true;
-        setThreadId(threadHeader);
-      }
+      if (!response.ok) throw new Error("The dialogue was interrupted.");
 
       const reader = response.body?.getReader();
-      if (!reader) throw new Error("No reader");
+      if (!reader) throw new Error("Unable to establish intellectual connection.");
 
-      // Add placeholder for assistant
-      const assistantMsgId = (Date.now() + 1).toString();
-      setMessages(prev => [
-        ...prev,
-        { id: assistantMsgId, role: 'assistant', content: '' }
-      ]);
+      // Initialize AI message placeholder
+      setMessages(prev => [...prev, { role: 'assistant', content: "" }]);
 
-      const decoder = new TextDecoder();
       let assistantContent = "";
-
-      let buffer = "";
-
+      const decoder = new TextDecoder();
+      
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
-        const text = decoder.decode(value, { stream: true });
-        buffer += text;
-
-        const lines = buffer.split('\n');
-        // Keep the last segment (potentially incomplete) in the buffer
-        buffer = lines.pop() || "";
+        const chunk = decoder.decode(value);
+        const lines = chunk.split("\n\n");
 
         for (const line of lines) {
-          if (line.trim() === '') continue;
-
-          if (line.startsWith('0:')) {
+          if (line.startsWith("data: ")) {
             try {
-              const content = JSON.parse(line.substring(2));
-              if (content) {
-                assistantContent += content;
-                // Update state specifically for the assistant message
-                setMessages(currentMessages => {
-                  const updated = [...currentMessages];
-                  const lastMsg = updated[updated.length - 1];
-                  if (lastMsg.role === 'assistant') {
-                    lastMsg.content = assistantContent;
-                  }
-                  return updated;
+              const data = JSON.parse(line.substring(6)) as Record<string, unknown>;
+              if (data.type === 'text') {
+                assistantContent += data.content;
+                setMessages(prev => {
+                  const last = prev[prev.length - 1];
+                  return [...prev.slice(0, -1), { 
+                    role: 'assistant', 
+                    content: assistantContent 
+                  }];
                 });
+              } else if (data.type === 'status' && data.content === 'deliberating') {
+                 // Option to show a spinner or status text
               }
-            } catch (e) {
-              console.warn("Parse error", e);
+            } catch (err) {
+              console.error("Parse error", err);
             }
           }
         }
       }
+      
+      // Refresh history after message completes
+      loadHistory();
 
-    } catch (err: any) {
-      setError(err);
-      console.error("Custom Fetch Error:", err);
+    } catch (err: unknown) {
+      setError((err as Error).message || "An error occurred.");
     } finally {
-      setIsLoading(false);
+      setLoading(false);
     }
   };
 
+  const resetThread = () => {
+    startNewInquiry();
+  };
+
+  const handleSignOut = () => {
+    auth.signOut();
+  };
+
+  if (authLoading) return null;
+
   return (
-    <div className="flex flex-col h-[100dvh] bg-background text-foreground transition-colors duration-500 overscroll-none">
-      {/* Header */}
-      <header className="flex justify-between items-center py-3 sm:py-4 px-4 sm:px-8 border-b border-border/40 bg-background/95 backdrop-blur-sm z-10 sticky top-0 gap-3 sm:gap-4">
-        <div className="flex items-center gap-3 sm:gap-4">
-          {/* History Sidebar (Left) */}
-          <HistorySidebar
-            currentThreadId={threadId}
-            onSelectThread={setThreadId}
-          />
-          <h1 className="text-xl sm:text-2xl font-serif tracking-tight text-primary font-bold truncate">
-            Sophia
-          </h1>
-        </div>
-
-        <div className="flex items-center gap-2 sm:gap-4">
-          <LogicSidebar />
-          <UserSettingsMenu />
-        </div>
-      </header>
-
-      {/* Main Dialogue Area */}
-      <main className="flex-1 overflow-hidden relative">
-        <div className="max-w-3xl mx-auto h-full flex flex-col">
-          {error && (
-            <div className="p-4 bg-destructive/10 text-destructive text-sm text-center border-b border-destructive/20">
-              An error occurred: {error.message}
-            </div>
-          )}
-          <div className="flex-1 overflow-hidden min-h-0">
-            <DialogueStream messages={messages} isLoading={isLoading} data={data} threadId={threadId} />
+    <div className="flex h-screen bg-[#F9F8F4] overflow-hidden">
+      {/* Sidebar - Desktop Only for now */}
+      <aside className="w-80 border-r border-secondary/20 hidden md:flex flex-col bg-white/50 backdrop-blur-sm">
+        <div className="p-6 border-b border-secondary/10 flex flex-col gap-4">
+          <div className="flex items-center justify-between">
+            <h1 className="text-2xl font-serif italic text-primary">Sophia</h1>
           </div>
+          <Button 
+            onClick={resetThread} 
+            variant="outline" 
+            className="w-full justify-start gap-2 border-secondary/20 bg-transparent hover:bg-secondary/5"
+          >
+            <MessageSquare className="w-4 h-4" />
+            New Inquiry
+          </Button>
+        </div>
 
-          {/* Input Area */}
-          <div className="p-3 sm:p-6 pb-4 sm:pb-8 bg-background">
-            <div className="max-w-prose mx-auto relative">
-              <Separator className="mb-2 sm:mb-4 bg-primary/10" />
-              <form onSubmit={handleSubmit} ref={formRef} className="relative flex items-end gap-2">
-                <AutoResizeTextarea
-                  className="w-full bg-transparent border-none text-base sm:text-lg font-serif focus:ring-0 placeholder:text-muted-foreground/50 resize-none py-3 sm:py-4 pr-20 focus:outline-none min-h-[44px] sm:min-h-[56px] px-0 shadow-none ring-offset-0 focus-visible:ring-0 focus-visible:ring-offset-0"
-                  placeholder="Respond to the inquiry..."
-                  autoFocus
-                  value={input}
-                  onChange={handleInputChange}
-                  onKeyDown={onKeyDown}
-                />
-                <Button
-                  type="submit"
-                  size="icon"
-                  disabled={!input.trim() || isLoading}
-                  className="absolute right-0 bottom-2 sm:bottom-3 rounded-full w-8 h-8 sm:w-10 sm:h-10 bg-primary text-primary-foreground hover:bg-primary/90 transition-all shadow-sm disabled:opacity-0 disabled:pointer-events-none"
-                >
-                  <Send className="w-4 h-4 sm:w-5 sm:h-5" />
-                  <span className="sr-only">Send</span>
-                </Button>
-              </form>
+        <ScrollArea className="flex-1 px-4 py-6">
+          <div className="space-y-6">
+            <div className="flex items-center gap-2 text-[10px] text-muted-foreground font-sans uppercase tracking-[0.2em] px-2">
+              <History className="w-3 h-3" />
+              Past Dialectics
             </div>
+            <div className="space-y-1">
+              {history.map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => {
+                      setThreadId(t.id);
+                      // In a real app we'd fetch messages for this thread
+                      // For now we just reset or alert
+                      alert("Historical thread loading disabled in MVP");
+                  }}
+                  className={`w-full text-left p-3 rounded-lg text-sm transition-all flex flex-col gap-1 border border-transparent ${t.id === threadId ? 'bg-secondary/10 border-secondary/20 shadow-sm' : 'hover:bg-secondary/5'}`}
+                >
+                  <span className="font-serif text-foreground truncate">{t.title}</span>
+                  <span className="text-[9px] font-sans uppercase tracking-widest text-muted-foreground opacity-60">
+                    {t.updated_at.toLocaleDateString()}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </ScrollArea>
+
+        <div className="p-4 border-t border-secondary/10 space-y-2">
+          <Link href="/traces">
+            <Button variant="ghost" className="w-full justify-start gap-2 text-muted-foreground hover:text-primary hover:bg-primary/5 transition-colors">
+              <Terminal className="w-4 h-4" />
+              Internal Traces
+            </Button>
+          </Link>
+          <Button 
+            onClick={handleSignOut} 
+            variant="ghost" 
+            className="w-full justify-start gap-2 text-muted-foreground hover:text-destructive hover:bg-destructive/5 transition-colors"
+          >
+            <LogOut className="w-4 h-4" />
+            Exit the Stoa
+          </Button>
+        </div>
+      </aside>
+
+      {/* Main Chat Area */}
+      <main className="flex-1 flex flex-col relative bg-[#F9F8F4]">
+        {/* Background Texture */}
+        <div className="absolute inset-0 opacity-[0.03] pointer-events-none" style={{ backgroundImage: 'url("https://www.transparenttextures.com/patterns/natural-paper.png")' }}></div>
+
+        {/* Floating Actions (Mobile only) */}
+        <div className="md:hidden absolute top-4 left-4 z-20">
+            <Button size="icon" variant="ghost" className="bg-white/80 backdrop-blur-sm border border-secondary/10 shadow-sm">
+                <History className="w-5 h-5" />
+            </Button>
+        </div>
+
+        <ScrollArea ref={scrollRef} className="flex-1">
+          <div className="max-w-prose mx-auto px-6 py-12 md:py-24 space-y-12">
+            {messages.length === 0 && (
+                <div className="text-center py-20 space-y-4">
+                    <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-6">
+                        <Terminal className="w-6 h-6 text-primary opacity-40" />
+                    </div>
+                   <h2 className="text-xl font-serif text-muted-foreground italic">Prepare for the First Inquiry...</h2>
+                </div>
+            )}
+            
+            {messages.map((m, i) => (
+              <div 
+                key={i} 
+                className={`flex flex-col gap-2 ${m.role === 'user' ? 'items-end' : 'items-start'}`}
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  <span className={`text-[10px] font-sans uppercase tracking-[0.3em] font-medium ${m.role === 'user' ? 'text-blue-600' : 'text-primary'}`}>
+                    {m.role === 'user' ? 'You' : 'Sophia'}
+                  </span>
+                  {m.role !== 'user' && <Info className="w-3 h-3 text-primary opacity-20" />}
+                </div>
+                <div className={`text-lg transition-all duration-500 whitespace-pre-wrap ${m.role === 'user' ? 'font-sans text-blue-900/70 border-r-2 border-blue-600/20 pr-6 pl-2' : 'font-serif text-foreground border-l-2 border-primary/20 pl-6 pr-2'}`}>
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {m.content}
+                    </ReactMarkdown>
+                </div>
+              </div>
+            ))}
+
+            {loading && (
+              <div className="flex flex-col gap-2 items-start animate-in fade-in slide-in-from-bottom-2 duration-500">
+                <span className="text-[10px] font-sans uppercase tracking-[0.3em] font-medium text-primary">
+                  Sophia [deliberation]
+                </span>
+                <div className="pl-6 border-l-2 border-primary/20 flex gap-2 pt-2">
+                    <div className="w-1 h-1 bg-primary/40 rounded-full animate-bounce"></div>
+                    <div className="w-1 h-1 bg-primary/40 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
+                    <div className="w-1 h-1 bg-primary/40 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
+                </div>
+              </div>
+            )}
+
+            {error && (
+                <div className="p-4 bg-destructive/5 text-destructive border border-destructive/20 rounded-lg text-sm flex items-center gap-3 animate-in fade-in duration-300">
+                    <Trash2 className="w-4 h-4" />
+                    <span className="italic">{error}</span>
+                </div>
+            )}
+            <div className="h-24"></div>
+          </div>
+        </ScrollArea>
+
+        {/* Input UI */}
+        <div className="p-6 md:pb-12 bg-gradient-to-t from-[#F9F8F4] via-[#F9F8F4] to-transparent pt-12">
+          <form 
+            onSubmit={handleSubmit}
+            className="max-w-prose mx-auto relative group"
+          >
+            <div className="relative flex items-end gap-2 bg-white/40 backdrop-blur-xl border border-secondary/20 rounded-2xl p-2 shadow-sm focus-within:ring-2 focus-within:ring-primary/10 transition-all">
+                <AutoResizeTextarea
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    placeholder="Pose your inquiry..."
+                    className="flex-1 bg-transparent border-none focus-visible:ring-0 resize-none py-3 px-4 text-lg font-serif placeholder:font-sans placeholder:text-muted-foreground/50"
+                    onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        handleSubmit(e as any);
+                    }
+                    }}
+                />
+                <Button 
+                    type="submit" 
+                    size="icon" 
+                    disabled={loading || !input.trim()}
+                    className="h-12 w-12 rounded-xl bg-primary hover:bg-primary/90 text-white shadow-lg transition-all active:scale-95 disabled:opacity-30 disabled:pointer-events-none"
+                >
+                    <Send className="w-5 h-5" />
+                </Button>
+            </div>
+          </form>
+          <div className="text-[9px] text-center mt-4 text-muted-foreground/50 font-sans uppercase tracking-widest flex items-center justify-center gap-3">
+            <span>Ontological Discourse Protocol v2.1</span>
+            <span className="w-1 h-1 bg-primary/20 rounded-full"></span>
+            <span>Vertex AI (Gemini 1.5 Pro)</span>
           </div>
         </div>
       </main>
