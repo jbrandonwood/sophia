@@ -1,38 +1,32 @@
-import { StateGraph, Annotation, MessagesAnnotation } from "@langchain/langgraph";
-import { firestoreSaver } from "../lib/langgraph/firestore-instance";
-import { analystNode } from "./nodes/analyst";
-import { interlocutorNode } from "./nodes/interlocutor";
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import { StateGraph } from "@langchain/langgraph";
+import { AgentState, AgentStateAnnotation } from "./state";
+import { AnalystNode } from "./nodes/analyst";
+import { InterlocutorNode } from "./nodes/interlocutor";
+import { SynthesizerNode } from "./nodes/synthesizer";
+import { CriticNode } from "./nodes/critic";
+import { FirestoreSaver } from "../lib/langgraph/firestore-saver";
 
-/**
- * Definition of the Sophia Agent State.
- * Extends the default LangGraph MessagesAnnotation with context-specific fields.
- */
-export const AgentState = Annotation.Root({
-    ...MessagesAnnotation.spec,
-    /** Current phase of the Socratic dialogue */
-    currentPhase: Annotation<"elicit" | "examine" | "challenge" | "concede" | "aporia">({
-        reducer: (x, y) => y ?? x,
-        default: () => "elicit",
-    }),
-    /** Citations retrieved from the philosophical corpus */
-    ragCitations: Annotation<Array<{ source: string; text: string; uri?: string }>>({
-        reducer: (x, y) => y ?? x,
-        default: () => [],
-    }),
-});
+// We use an explicit 'any' for the compiled app to satisfy complex Generic constraints in LangChain
+let compiledApp: any = null;
 
-/**
- * The Compiled State Graph for the Sophia Agent.
- * Orchestrates the flow between Analysis (Analyst) and Dialogue (Interlocutor).
- */
-const builder = new StateGraph(AgentState)
-    .addNode("analyst", analystNode)
-    .addNode("interlocutor", interlocutorNode)
-    .addEdge("__start__", "analyst")
-    .addEdge("analyst", "interlocutor")
-    .addEdge("interlocutor", "__end__");
+export async function getApp() {
+    if (compiledApp) return compiledApp;
 
-// Reverting to any for the saver type to satisfy the BaseCheckpointSaver generic constraints
-// while maintaining the firestoreSaver singleton usage.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export const app = builder.compile({ checkpointer: firestoreSaver as any });
+    const saver = new FirestoreSaver();
+
+    const workflow = new StateGraph(AgentStateAnnotation)
+        .addNode("analyst", AnalystNode)
+        .addNode("interlocutor", InterlocutorNode)
+        .addNode("synthesizer", SynthesizerNode)
+        .addNode("critic", CriticNode)
+        .addEdge("__start__", "analyst")
+        .addEdge("analyst", "interlocutor")
+        .addEdge("interlocutor", "__end__");
+
+    compiledApp = workflow.compile({
+        checkpointer: saver
+    });
+
+    return compiledApp;
+}

@@ -1,44 +1,18 @@
-import { initializeApp, applicationDefault, getApps } from "firebase-admin/app";
-import { getFirestore } from "firebase-admin/firestore";
+import { db } from "../lib/firebase/server";
+import { getApp } from "./src/agent/graph";
 
-/**
- * Administrative setup script for debugging and initializing the conversation database.
- */
-async function setup() {
-    console.log("Starting Admin Setup...");
-    
-    if (getApps().length === 0) {
-        initializeApp({
-            credential: applicationDefault(),
-            projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID
-        });
-    }
-
-    const db = getFirestore();
-
+async function main() {
+    console.log("Starting Debug Admin Setup...");
     try {
-        const testData: Record<string, unknown> = {
-            title: "The Initial Inquiry",
-            userId: "test-user-123",
-            updated_at: new Date(),
-            preview: "Is the soul immortal?"
-        };
+        const app = await getApp();
+        console.log("Agent App Initialized:", !!app);
 
-        const docRef = await db.collection("threads").add(testData);
-        console.log("SUCCESS: Created thread ", docRef.id);
-
-        // Clean up
-        await docRef.delete();
-        console.log("CLEANUP: Deleted test thread.");
-
+        // Test DB access
+        const testData = await db.collection("threads").limit(1).get();
+        console.log("Test DB access OK, docs found:", testData.docs.length);
     } catch (e: unknown) {
-        console.error("SETUP FAILED");
-        const err = e as { message?: string; code?: string };
-        console.error(`Error: ${err.message || e}`);
-        console.error(`Code: ${err.code || 'UNKNOWN'}`);
+        console.error("Admin setup debug failed:", e);
     }
 }
 
-if (require.main === module) {
-    setup();
-}
+main();

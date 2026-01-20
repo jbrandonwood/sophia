@@ -1,38 +1,43 @@
-import { searchPhilosophicalCorpus } from "../../lib/ai/search";
-import { AgentState } from "../graph";
+import { ChatVertexAI } from "@langchain/google-vertexai";
+import { AnalystResponse, AgentState } from "../state";
 
-interface AnalystResponse {
-    query: string;
-    shouldSearch: boolean;
-}
+export async function AnalystNode(state: AgentState) {
+    console.log("--- ANALYST NODE ---");
+    const { messages } = state;
 
-/**
- * The Analyst node responsible for classifying user intent and retrieving logic.
- * Decides whether to query the philosophical corpus or proceed with pure dialogue.
- */
-export async function analystNode(state: typeof AgentState.State) {
-    console.log("--- STARTING ANALYSIS ---");
-    const lastMessage = state.messages[state.messages.length - 1];
+    const model = new ChatVertexAI({
+        model: "gemini-3-flash-preview",
+        temperature: 0, // Strict and logical
+        location: 'global'
+    });
+
+    const prompt = `
+    You are the Analyst of the Digital Stoa.
+    Your task is to analyze the user's latest statement and extract the underlying thesis, sentiment, and logical quality.
     
-    // Default search logic: if it's not a short greeting, search.
-    // In production, this would be a small LLM call to generate a search query.
-    const userText = lastMessage.content.toString();
-    const isQuestion = userText.includes("?") || userText.length > 20;
-
-    let citations: Array<{ source: string; text: string; uri?: string }> = [];
-    
-    if (isQuestion) {
-        console.log(`Searching corpus for: "${userText.substring(0, 50)}..."`);
-        const results = await searchPhilosophicalCorpus(userText, 3);
-        citations = results.map(r => ({
-            source: r.title,
-            text: r.text,
-            uri: r.uri
-        }));
+    Return your analysis as a JSON object:
+    {
+      "thesis": "...",
+      "sentiment": "...",
+      "quality": 0-1 (float)
     }
+    `;
 
-    return {
-        ragCitations: citations,
-        currentPhase: citations.length > 0 ? "examine" : "elicit",
-    };
+    const response = await model.invoke([
+        ...messages,
+        { role: "system", content: prompt }
+    ]);
+
+    try {
+        const content = typeof response.content === 'string' ? response.content : "";
+        const analysis = JSON.parse(content) as AnalystResponse;
+        return {
+            current_thesis: analysis.thesis,
+            user_sentiment: analysis.sentiment,
+            currentPhase: 'examine'
+        };
+    } catch (e) {
+        console.error("Failed to parse analyst response", e);
+        return { currentPhase: 'examine' };
+    }
 }
