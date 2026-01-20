@@ -41,6 +41,7 @@ export async function searchPhilosophicalCorpus(
     }
 
     try {
+        // 1. Get Auth Token
         const auth = getAuthClient();
         const client = await auth.getClient();
         const accessToken = await client.getAccessToken();
@@ -49,6 +50,7 @@ export async function searchPhilosophicalCorpus(
             throw new Error("Failed to generate Google Cloud access token");
         }
 
+        // 2. Make REST Request
         const response = await fetch(API_ENDPOINT, {
             method: 'POST',
             headers: {
@@ -74,6 +76,8 @@ export async function searchPhilosophicalCorpus(
         const data = await response.json();
         const citations: Citation[] = [];
 
+        // 3. Parse Results
+        // Protocol: { results: [ { document: { ... } } ] }
         if (data.results && Array.isArray(data.results)) {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             for (const result of data.results as any[]) {
@@ -82,6 +86,7 @@ export async function searchPhilosophicalCorpus(
 
                 if (!docData && !structData) continue;
 
+                // Priority: Extractive Segment (Best context) > Extractive Answer > Snippet > Full Content (Fallback)
                 let text = "";
 
                 if (docData?.extractive_segments?.[0]?.content) {
@@ -91,6 +96,7 @@ export async function searchPhilosophicalCorpus(
                 } else if (docData?.snippets?.[0]?.snippet) {
                     text = docData.snippets[0].snippet;
                 } else if (structData?.text) {
+                    // Fallback to unstructured text if available
                     text = structData.text.substring(0, 500) + "...";
                 }
 
@@ -100,7 +106,7 @@ export async function searchPhilosophicalCorpus(
                 if (text) {
                     citations.push({
                         source: `${sourceAuthor}, ${sourceTitle}`,
-                        text: text,
+                        text: text, // potentially contains HTML <b> tags
                         uri: result.document?.name
                     });
                 }

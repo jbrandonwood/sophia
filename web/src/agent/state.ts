@@ -21,9 +21,7 @@ export interface AgentState {
     socratic_move: "ELICIT" | "EXAMINE" | "CHALLENGE" | "CONCEDE" | "SYNTHESIZE";
     search_query: string;            // Synthesized query
     documents: Citation[];           // Grounding artifacts
-
-    // Safety
-    critic_failures: number;         // To prevent infinite loops in Node D
+    logic_critique: string;          // Internal monologue on user's logic
 }
 
 // --- Annotation --
@@ -61,8 +59,8 @@ export const AgentStateAnnotation = Annotation.Root({
         reducer: (x, y) => y, // Replace documents for each turn
         default: () => [],
     }),
-    critic_failures: Annotation<number>({
+    logic_critique: Annotation<string>({
         reducer: (x, y) => y,
-        default: () => 0,
+        default: () => "",
     }),
 });
