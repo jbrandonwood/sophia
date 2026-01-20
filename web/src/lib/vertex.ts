@@ -3,10 +3,13 @@ import { GoogleAuth } from 'google-auth-library';
 const PROJECT_ID = process.env.GOOGLE_VERTEX_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT || 'sophia-484006';
 const LOCATION = 'global';
 const DATA_STORE_ID = process.env.VERTEX_SEARCH_DATA_STORE_ID || 'sophia-kb-v1';
+const APP_ID = process.env.VERTEX_SEARCH_APP_ID;
 const MAX_SEARCHES_PER_TURN = 10;
 
 // REST API Endpoint Construction
-const API_ENDPOINT = `https://discoveryengine.googleapis.com/v1alpha/projects/${PROJECT_ID}/locations/${LOCATION}/collections/default_collection/dataStores/${DATA_STORE_ID}/servingConfigs/default_search:search`;
+const API_ENDPOINT = APP_ID
+    ? `https://discoveryengine.googleapis.com/v1alpha/projects/${PROJECT_ID}/locations/${LOCATION}/collections/default_collection/engines/${APP_ID}/servingConfigs/default_search:search`
+    : `https://discoveryengine.googleapis.com/v1alpha/projects/${PROJECT_ID}/locations/${LOCATION}/collections/default_collection/dataStores/${DATA_STORE_ID}/servingConfigs/default_search:search`;
 
 export interface Citation {
     source: string;

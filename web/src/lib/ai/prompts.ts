@@ -43,10 +43,10 @@ const FALLBACK_PROMPTS = [
 export async function generateInitialPrompt(): Promise<string> {
     try {
         const model = new ChatVertexAI({
-            model: "gemini-1.5-flash-001",
+            model: "gemini-3-flash-preview",
             temperature: 0.9,
             maxOutputTokens: 100,
-            location: 'us-central1'
+            location: 'global'
         });
 
         const response = await model.invoke([

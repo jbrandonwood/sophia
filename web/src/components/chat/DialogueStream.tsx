@@ -18,6 +18,31 @@ export function DialogueStream({ messages, isLoading, data, threadId }: { messag
         }
     }, [messages, data, isLoading]);
 
+    // Handle mobile keyboard resize
+    useEffect(() => {
+        const handleResize = () => {
+            if (scrollRef.current && window.visualViewport) {
+                // If keyboard opens (viewport shrinks), scroll to bottom
+                // We add a small delay to ensure the layout has updated
+                setTimeout(() => {
+                    if (scrollRef.current) {
+                        scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+                    }
+                }, 100);
+            }
+        };
+
+        if (window.visualViewport) {
+            window.visualViewport.addEventListener('resize', handleResize);
+        }
+
+        return () => {
+            if (window.visualViewport) {
+                window.visualViewport.removeEventListener('resize', handleResize);
+            }
+        };
+    }, []);
+
     // Derive Thinking State from data stream
     const thinkingState = isLoading ? { node: 'thinking' } : null;
 
