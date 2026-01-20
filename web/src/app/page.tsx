@@ -12,6 +12,7 @@ import { auth } from "@/lib/firebase/client";
 import { getConversationHistoryFromClient } from "@/actions/history";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import Link from "next/link";
 
 interface Message {
   role: 'user' | 'assistant' | 'system';
