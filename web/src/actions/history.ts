@@ -1,6 +1,4 @@
-"use client";
-
-import { db } from "@/lib/firebase/client";
+import { db } from "@/lib/firebase/server";
 import { 
     collection, 
     query, 
@@ -43,7 +41,7 @@ export async function getConversationHistoryFromClient(userId: string, limit: nu
                 preview: data.preview || ""
             };
         });
-    } catch (e) {
+    } catch (e: unknown) {
         console.error("Error fetching conversation history:", e);
         return [];
     }

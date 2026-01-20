@@ -39,7 +39,7 @@ export async function synthesizerNode(state: AgentState): Promise<Partial<AgentS
         new HumanMessage("Please synthesize our dialogue.")
     ];
 
-    const response = await model.invoke(messages);
+    const response = await model.invoke(messages, { tags: ["synthesizer"] });
 
     return {
         messages: [response],
