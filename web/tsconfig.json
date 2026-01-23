@@ -43,6 +43,7 @@
     "src/scripts",
     "test-*.ts",
     "**/*.test.ts",
-    "*.js"
+    "*.js",
+    "debug-admin-setup.ts"
   ]
 }

@@ -1,11 +1,17 @@
 import { db } from "@/lib/firebase/server";
 import { format } from "date-fns";
-import Link from "next/link";
 import { ArrowLeft, Clock, List, Terminal, AlertCircle } from "lucide-react";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
+import { ScrollArea } from "@/components/ui/scroll-area";
 
 export const dynamic = 'force-dynamic';
+
+interface TraceThread {
+    id: string;
+    title?: string;
+    updated_at: any; // eslint-disable-line @typescript-eslint/no-explicit-any
+}
 
 async function getTraceThreads() {
     try {
@@ -17,7 +23,7 @@ async function getTraceThreads() {
         return snapshot.docs.map(doc => ({
             id: doc.id,
             ...doc.data()
-        })) as any[];
+        })) as TraceThread[];
     } catch (e: unknown) {
         console.error("Error fetching trace threads:", e);
         throw e;
@@ -25,7 +31,7 @@ async function getTraceThreads() {
 }
 
 export default async function TracesPage() {
-    let threads: any[] = [];
+    let threads: TraceThread[] = [];
     let error: Error | null = null;
 
     try {

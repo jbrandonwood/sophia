@@ -1,10 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
-import { app } from "@/agent/graph";
+import { getApp } from "@/agent/graph";
 import { db } from "@/lib/firebase/server";
-import { generateConversationTitle } from "@/lib/ai/titling";
+import { generateThreadTitle as generateConversationTitle } from "@/lib/ai/titling";
 import { BaseMessage, HumanMessage, AIMessage, SystemMessage } from "@langchain/core/messages";
 
 export const dynamic = 'force-dynamic';
+
+interface Message {
+    role: "user" | "assistant" | "system";
+    content: string;
+}
 
 export async function POST(req: NextRequest) {
     console.log("--- CHAT API REQUEST RECEIVED ---");
@@ -15,14 +20,14 @@ export async function POST(req: NextRequest) {
         if (!authHeader?.startsWith("Bearer ")) {
             return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
-        
+
         // In a real app, verify the Firebase ID token here
         // For now, we trust the client or use a placeholder
-        const userId = "test-user-123"; 
+        const userId = "test-user-123";
 
         // --- 2. Parse Request ---
         const requestBody = await req.json() as Record<string, unknown>;
-        const messages = (requestBody.messages as any[]) || [];
+        const messages = (requestBody.messages as Message[]) || [];
         const threadId = requestBody.threadId as string;
         const configurable = (requestBody.configurable as Record<string, unknown>) || {};
 
@@ -37,16 +42,16 @@ export async function POST(req: NextRequest) {
         // or just check if title exists)
         const threadRef = db.collection("threads").doc(threadId);
         const threadDoc = await threadRef.get();
-        
+
         if (!threadDoc.exists || !threadDoc.data()?.title) {
             const firstHumanMsg = messages.find(m => m.role === 'user')?.content;
             if (firstHumanMsg) {
                 console.log("[API] Generating title for new thread...");
-                generateConversationTitle(firstHumanMsg).then(title => {
-                    threadRef.set({ 
-                        title, 
+                generateConversationTitle([new HumanMessage(firstHumanMsg)]).then(title => {
+                    threadRef.set({
+                        title,
                         userId,
-                        updated_at: new Date() 
+                        updated_at: new Date()
                     }, { merge: true });
                 }).catch(e => console.error("Titling error:", e));
             }
@@ -64,6 +69,7 @@ export async function POST(req: NextRequest) {
                         return new HumanMessage(m.content);
                     });
 
+                    const app = await getApp();
                     const eventStream = app.streamEvents(
                         { messages: langchainMessages },
                         {

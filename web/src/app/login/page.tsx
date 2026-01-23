@@ -42,17 +42,17 @@ export default function LoginPage() {
                 </CardHeader>
                 <CardContent className="space-y-6">
                     <p className="text-center text-sm text-muted-foreground italic leading-relaxed">
-                        "The unexamined life is not worth living."
+                        &quot;The unexamined life is not worth living.&quot;
                     </p>
-                    
+
                     {error && (
                         <div className="p-3 bg-destructive/10 text-destructive text-xs rounded-md border border-destructive/20 text-center">
                             {error}
                         </div>
                     )}
 
-                    <Button 
-                        onClick={handleLogin} 
+                    <Button
+                        onClick={handleLogin}
                         disabled={loading}
                         className="w-full h-12 text-lg font-serif"
                     >
