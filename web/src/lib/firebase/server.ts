@@ -12,22 +12,36 @@ function ensureInitialized() {
     const projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
 
     // During build time in CI, we may not have these variables.
-    // If they are missing, we log a warning but don't crash here.
-    // Crashing will only happen if the code actually attempts to USE the db/auth during build.
-    if (!privateKey || !clientEmail || !projectId) {
-        console.warn("Firebase Admin environment variables are missing. Initialization skipped (likely build-time).");
-        return;
-    }
+    // However, in Cloud Run, we should rely on Application Default Credentials (ADC)
+    // if the explicit private key/email are not available.
+
+    if (admin.apps.length > 0) return;
 
     try {
-        admin.initializeApp({
-            credential: admin.credential.cert({
-                projectId,
-                clientEmail,
-                privateKey: privateKey.replace(/\\n/g, '\n'),
-            }),
-        });
-        console.log("Firebase Admin Initialized successfully for project:", projectId);
+        if (privateKey && clientEmail) {
+            admin.initializeApp({
+                credential: admin.credential.cert({
+                    projectId,
+                    clientEmail,
+                    privateKey: privateKey.replace(/\\n/g, '\n'),
+                }),
+                projectId
+            });
+            console.log("Firebase Admin Initialized with explicit credentials for project:", projectId);
+        } else {
+            // Fallback to ADC (Application Default Credentials)
+            // This works automatically on Cloud Run if the service account has permissions.
+            // We still need a projectId, which should be available from build args.
+            if (projectId) {
+                admin.initializeApp({
+                    projectId,
+                    credential: admin.credential.applicationDefault()
+                });
+                console.log("Firebase Admin Initialized with ADC for project:", projectId);
+            } else {
+                console.warn("Firebase Admin: Project ID is missing. Initialization skipped.");
+            }
+        }
     } catch (error) {
         console.error('Firebase admin initialization error', error);
     }

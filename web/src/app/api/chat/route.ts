@@ -26,14 +26,23 @@ export async function POST(req: NextRequest) {
         const userId = "test-user-123";
 
         // --- 2. Parse Request ---
-        const requestBody = await req.json() as Record<string, unknown>;
-        const messages = (requestBody.messages as Message[]) || [];
-        const threadId = requestBody.threadId as string;
-        const configurable = (requestBody.configurable as Record<string, unknown>) || {};
-
-        if (!threadId) {
-            return NextResponse.json({ error: "Missing threadId" }, { status: 400 });
+        let requestBody: Record<string, unknown>;
+        try {
+            requestBody = await req.json() as Record<string, unknown>;
+        } catch (e) {
+            console.error("[API] Failed to parse request JSON:", e);
+            return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
         }
+
+        const messages = requestBody.messages as Message[];
+        if (!messages || !Array.isArray(messages)) {
+            console.error("[API] 'messages' field is missing or not an array");
+            return NextResponse.json({ error: "'messages' array is required" }, { status: 400 });
+        }
+
+        // If no threadId is provided, generate a new one
+        const threadId = (requestBody.threadId as string) || crypto.randomUUID();
+        const configurable = (requestBody.configurable as Record<string, unknown>) || {};
 
         console.log(`[API] Processing thread ${threadId} for user ${userId}`);
 
@@ -110,6 +119,7 @@ export async function POST(req: NextRequest) {
                 "Content-Type": "text/event-stream",
                 "Cache-Control": "no-cache",
                 "Connection": "keep-alive",
+                "x-sophia-thread-id": threadId,
             },
         });
 
